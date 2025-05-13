@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}机器人管理 - Emby签到助手{% endblock %}
+
+{% block content %}
+<h2>机器人管理</h2>
+<p>添加需要进行签到的Telegram机器人用户名 (例如 YounoEmby_bot)。</p>
+
+<form id="addBotForm" class="mb-4">
+    <div class="form-row">
+        <div class="col-md-8">
+            <input type="text" class="form-control" id="bot_username" name="bot_username" placeholder="输入机器人用户名 (不带@)" required>
+        </div>
+        <div class="col-md-4">
+            <button type="submit" class="btn btn-success btn-block">添加机器人</button>
+        </div>
+    </div>
+</form>
+
+<h4>已添加机器人</h4>
+{% if bots %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>机器人用户名</th>
+            <th>手动签到</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for bot_username in bots %}
+        <tr>
+            <td>@{{ bot_username }}</td>
+            <td>
+                <button class="btn btn-info btn-sm manual-checkin-btn" data-bot="{{ bot_username }}" {% if not users or users | selectattr('status', 'equalto', 'logged_in') | list | length == 0 %}disabled title="没有已登录的用户可用于签到"{% endif %}>
+                    手动签到
+                </button>
+            </td>
+            <td>
+                <button class="btn btn-danger btn-sm delete-bot-btn" data-bot="{{ bot_username }}">删除</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>还没有添加任何机器人。</p>
+{% endif %}
+
+<div class="modal fade" id="manualCheckinModal" tabindex="-1" role="dialog" aria-labelledby="manualCheckinModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="manualCheckinModalLabel">手动签到: <span id="checkinBotName"></span></h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>请选择一个已登录的用户账户进行签到：</p>
+        <select id="manualCheckinUserSelect" class="form-control mb-3">
+            {% for user in users %}
+                {% if user.status == 'logged_in' %}
+                    <option value="{{ user.phone }}">{{ user.name }} ({{ user.phone }})</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+        <input type="hidden" id="manualCheckinBotHidden">
+        <div id="manual-checkin-result-area"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary" id="submitManualCheckinBtn">开始签到</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#addBotForm').on('submit', function(e) {
+        e.preventDefault();
+        const bot_username = $('#bot_username').val();
+        $.ajax({
+            url: "{{ url_for('api_add_bot') }}",
+            type: 'POST',
+            data: { bot_username: bot_username },
+            dataType: 'json',
+            success: function(response) {
+                showAlert(response.message, response.success ? 'success' : 'danger');
+                if (response.success) {
+                    setTimeout(function() { location.reload(); }, 1000);
+                }
+            },
+            error: function(xhr) {
+                let errorMsg = '添加机器人失败。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorMsg = xhr.responseJSON.message;
+                }
+                showAlert(errorMsg, 'danger');
+            },
+            complete: function() {
+                $('#bot_username').val('');
+            }
+        });
+    });
+
+    $('.delete-bot-btn').on('click', function() {
+        const bot_username = $(this).data('bot');
+        if (confirm(`确定要删除机器人 @${bot_username} 吗？相关的签到任务也会被删除。`)) {
+            $.ajax({
+                url: "{{ url_for('api_delete_bot') }}",
+                type: 'POST',
+                data: { bot_username: bot_username },
+                dataType: 'json',
+                success: function(response) {
+                    showAlert(response.message, response.success ? 'success' : 'danger');
+                    if (response.success) {
+                        setTimeout(function() { location.reload(); }, 1000);
+                    }
+                },
+                error: function(xhr) {
+                    showAlert('删除机器人失败。', 'danger');
+                }
+            });
+        }
+    });
+
+    $('.manual-checkin-btn').on('click', function() {
+        const botUsername = $(this).data('bot');
+        $('#checkinBotName').text('@' + botUsername);
+        $('#manualCheckinBotHidden').val(botUsername);
+        $('#manual-checkin-result-area').html('');
+        $('#manualCheckinModal').modal('show');
+    });
+
+    $('#submitManualCheckinBtn').on('click', function() {
+        const userPhone = $('#manualCheckinUserSelect').val();
+        const botUsername = $('#manualCheckinBotHidden').val();
+        const btn = $(this);
+
+        if (!userPhone) {
+            showAlert('请选择一个用户进行签到。', 'warning', 'manual-checkin-result-area');
+            return;
+        }
+        
+        btn.prop('disabled', true).text('签到中...');
+        $('#manual-checkin-result-area').html('<p class="text-info">正在尝试签到...</p>');
+
+        $.ajax({
+            url: "{{ url_for('api_manual_checkin') }}",
+            type: 'POST',
+            data: { user_phone: userPhone, bot_username: botUsername },
+            dataType: 'json',
+            success: function(response) {
+                const resultType = response.success ? 'success' : 'danger';
+                const resultMsg = `<strong>结果:</strong> ${response.message}`;
+                $('#manual-checkin-result-area').html(`<div class="alert alert-${resultType}">${resultMsg}</div>`);
+            },
+            error: function(xhr) {
+                let errorText = '手动签到请求失败。';
+                 if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorText = xhr.responseJSON.message;
+                }
+                $('#manual-checkin-result-area').html(`<div class="alert alert-danger">${errorText}</div>`);
+            },
+            complete: function() {
+                btn.prop('disabled', false).text('开始签到');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}API设置 - Emby签到助手{% endblock %}
+
+{% block content %}
+<h2>Telegram API 设置</h2>
+<p>请输入您的 Telegram API ID 和 API Hash。您可以从 <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a> 获取这些信息。</p>
+<form method="POST">
+    <div class="form-group">
+        <label for="api_id">API ID</label>
+        <input type="text" class="form-control" id="api_id" name="api_id" value="{{ api_id_display if api_id_display is not none else '' }}" placeholder="{{ '已设置，如需修改请输入新值' if original_api_id else '请输入API ID' }}" required>
+    </div>
+    <div class="form-group">
+        <label for="api_hash">API Hash</label>
+        <input type="text" class="form-control" id="api_hash" name="api_hash" value="{{ api_hash_display if api_hash_display is not none else '' }}" placeholder="{{ '已设置，如需修改请输入新值' if original_api_hash else '请输入API Hash' }}" required>
+    </div>
+
+    <hr>
+    <h2>自动签到设置</h2>
+    <div class="form-group form-check">
+        <input type="checkbox" class="form-check-input" id="scheduler_enabled" name="scheduler_enabled" {% if scheduler_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="scheduler_enabled">启用每日自动签到 (各任务在指定范围内随机时间执行)</label>
+    </div>
+    <p class="text-muted"><small>启用后，每个签到任务将在下方设定的时间范围内，独立随机选择一个时间点执行。系统会在每日凌晨自动为任务重新分配新的随机时间。</small></p>
+    
+    <h5>签到时间范围 (北京时间)</h5>
+    <div class="form-row">
+        <div class="form-group col-md-3">
+            <label for="scheduler_range_start_hour">开始小时 (0-23)</label>
+            <input type="number" class="form-control" id="scheduler_range_start_hour" name="scheduler_range_start_hour" value="{{ scheduler_range_start_hour if scheduler_range_start_hour is not none else '8' }}" min="0" max="23" required>
+        </div>
+        <div class="form-group col-md-3">
+            <label for="scheduler_range_start_minute">开始分钟 (0-59)</label>
+            <input type="number" class="form-control" id="scheduler_range_start_minute" name="scheduler_range_start_minute" value="{{ scheduler_range_start_minute if scheduler_range_start_minute is not none else '0' }}" min="0" max="59" required>
+        </div>
+        <div class="form-group col-md-3">
+            <label for="scheduler_range_end_hour">结束小时 (0-23)</label>
+            <input type="number" class="form-control" id="scheduler_range_end_hour" name="scheduler_range_end_hour" value="{{ scheduler_range_end_hour if scheduler_range_end_hour is not none else '22' }}" min="0" max="23" required>
+        </div>
+        <div class="form-group col-md-3">
+            <label for="scheduler_range_end_minute">结束分钟 (0-59)</label>
+            <input type="number" class="form-control" id="scheduler_range_end_minute" name="scheduler_range_end_minute" value="{{ scheduler_range_end_minute if scheduler_range_end_minute is not none else '0' }}" min="0" max="59" required>
+        </div>
+    </div>
+     <p class="text-muted"><small>请确保结束时间晚于开始时间，且都在同一天内。</small></p>
+
+    <button type="submit" class="btn btn-primary mt-3">保存所有设置</button>
+</form>
+{% endblock %}

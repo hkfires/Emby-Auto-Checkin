@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}签到任务 - Emby签到助手{% endblock %}
+
+{% block content %}
+<h2>签到任务管理</h2>
+<p>配置用户和机器人之间的签到任务。只有已成功登录的用户才会显示在用户下拉列表中。</p>
+
+<form id="addTaskForm" class="mb-4">
+    <div class="form-row align-items-end">
+        <div class="col-md-5">
+            <label for="user_nickname">选择用户</label>
+            <select class="form-control" id="user_nickname" name="user_nickname" required>
+                <option value="">-- 选择一个已登录的用户 --</option>
+                {% for user in users %}
+                    {% if user.status == 'logged_in' %}
+                        <option value="{{ user.nickname }}">{{ user.nickname }} ({{ user.telegram_username | default(user.telegram_first_name) | default('TG账号') }})</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-5">
+            <label for="bot_username_task">选择机器人</label>
+            <select class="form-control" id="bot_username_task" name="bot_username" required>
+                <option value="">-- 选择一个机器人 --</option>
+                {% for bot in bots %}
+                    <option value="{{ bot }}">@{{ bot }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-success btn-block">添加任务</button>
+        </div>
+    </div>
+</form>
+
+<h4>已配置任务</h4>
+{% if tasks %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>用户昵称</th>
+            <th>机器人用户名</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for task in tasks %}
+        <tr>
+            <td>{{ task.user_nickname }}</td>
+            <td>@{{ task.bot_username }}</td>
+            <td>
+                <button class="btn btn-danger btn-sm delete-task-btn" data-nickname="{{ task.user_nickname }}" data-bot="{{ task.bot_username }}">删除</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>还没有配置任何签到任务。</p>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#addTaskForm').on('submit', function(e) {
+        e.preventDefault();
+        const user_nickname = $('#user_nickname').val(); // Changed
+        const bot_username = $('#bot_username_task').val();
+
+        if (!user_nickname || !bot_username) { // Changed
+            showAlert('请选择用户和机器人。', 'warning');
+            return;
+        }
+
+        $.ajax({
+            url: "{{ url_for('api_add_task') }}",
+            type: 'POST',
+            data: { user_nickname: user_nickname, bot_username: bot_username }, // Changed
+            dataType: 'json',
+            success: function(response) {
+                showAlert(response.message, response.success ? 'success' : 'danger');
+                if (response.success) {
+                    setTimeout(function() { location.reload(); }, 1000);
+                }
+            },
+            error: function(xhr) {
+                let errorMsg = '添加任务失败。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorMsg = xhr.responseJSON.message;
+                }
+                showAlert(errorMsg, 'danger');
+            }
+        });
+    });
+
+    $('.delete-task-btn').on('click', function() {
+        const user_nickname = $(this).data('nickname'); // Changed
+        const bot_username = $(this).data('bot');
+        if (confirm(`确定要删除任务：用户 ${user_nickname} -> 机器人 @${bot_username} 吗？`)) { // Changed
+            $.ajax({
+                url: "{{ url_for('api_delete_task') }}",
+                type: 'POST',
+                data: { user_nickname: user_nickname, bot_username: bot_username }, // Changed
+                dataType: 'json',
+                success: function(response) {
+                    showAlert(response.message, response.success ? 'success' : 'danger');
+                    if (response.success) {
+                        setTimeout(function() { location.reload(); }, 1000);
+                    }
+                },
+                error: function(xhr) {
+                     showAlert('删除任务失败。', 'danger');
+                }
+            });
+        }
+    });
+});
+</script>
+{% endblock %}

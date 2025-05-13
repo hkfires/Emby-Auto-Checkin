@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}首页 - Emby签到助手{% endblock %}
+
+{% block content %}
+<div class="jumbotron">
+    <h1 class="display-4">欢迎使用Emby签到助手！</h1>
+    <p class="lead">通过本面板管理您的Telegram API设置、用户、机器人以及自动签到任务。</p>
+    <hr class="my-4">
+    <p>如果这是您首次使用，请先前往“API设置”页面配置您的Telegram API ID和API Hash。</p>
+    <a class="btn btn-primary btn-lg" href="{{ url_for('setup_page') }}" role="button">API设置</a>
+</div>
+
+<h2>快速操作</h2>
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">执行所有签到任务</h5>
+                <p class="card-text">点击下方按钮，为所有已配置的签到任务执行一次签到操作。</p>
+                <button id="checkinAllBtn" class="btn btn-success">立即执行所有任务</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="checkin-results-area" style="margin-top: 20px;">
+    <h4>签到结果:</h4>
+    <pre id="checkin-results-pre" style="background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 15px; max-height: 400px; overflow-y: auto;"></pre>
+</div>
+
+<hr class="my-4">
+<h2>今日签到日志</h2>
+<div id="todays-log-area" style="margin-top: 20px;">
+    {% if todays_checkin_log and todays_checkin_log|length > 0 %}
+        <ul class="list-group">
+            {% for log_entry in todays_checkin_log | sort(attribute='timestamp', reverse=True) %}
+                <li class="list-group-item">
+                    <strong>时间:</strong> {{ log_entry.timestamp | format_datetime }} <br>
+                    <strong>类型:</strong> 
+                    {% if log_entry.type == 'scheduler' or log_entry.type == 'scheduler_single_task' %}
+                        自动任务
+                    {% elif log_entry.type == 'manual' %}
+                        手动执行 (单任务)
+                    {% elif log_entry.type == 'http_manual_all' %}
+                        手动执行 (所有任务)
+                    {% else %}
+                        {{ log_entry.type }}
+                    {% endif %}
+                    <br>
+                    <strong>用户:</strong> {{ log_entry.user_phone }} <br>
+                    <strong>机器人:</strong> {{ log_entry.bot_username }} <br>
+                    <strong>状态:</strong> <span class="badge badge-{{ 'success' if log_entry.success else 'danger' }}">{{ '成功' if log_entry.success else '失败' }}</span> <br>
+                    <strong>消息:</strong> {{ log_entry.message }}
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>今日尚无签到记录。</p>
+        {% if config.scheduler_enabled %}
+            <p>自动签到任务已启用。各任务将在 {{ "%02d:%02d"|format(config.scheduler_range_start_hour, config.scheduler_range_start_minute) }} - {{ "%02d:%02d"|format(config.scheduler_range_end_hour, config.scheduler_range_end_minute) }} (北京时间) 范围内随机执行。</p>
+        {% else %}
+            <p>自动签到任务当前已禁用。您可以前往“API设置”页面启用并配置。</p>
+        {% endif %}
+    {% endif %}
+</div>
+
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Helper function to format ISO datetime string
+function formatLocalDateTime(isoString) {
+    if (!isoString) return 'N/A';
+    try {
+        const date = new Date(isoString);
+        return date.toLocaleString(); // Uses browser's local timezone and format
+    } catch (e) {
+        return isoString; // Fallback to original string if parsing fails
+    }
+}
+
+$(document).ready(function() {
+    // Update timestamps in the log to local time
+    $('#todays-log-area .list-group-item').each(function() {
+        const strongElement = $(this).find('strong:contains("时间:")');
+        if (strongElement.length) {
+            const originalTimestamp = strongElement[0].nextSibling.nodeValue.trim();
+            if (originalTimestamp) {
+                strongElement[0].nextSibling.nodeValue = ' ' + formatLocalDateTime(originalTimestamp) + ' ';
+            }
+        }
+    });
+
+
+    $('#checkinAllBtn').on('click', function() {
+        $(this).prop('disabled', true).text('正在执行...');
+        $('#checkin-results-pre').text('开始执行所有签到任务...');
+        $.ajax({
+            url: "{{ url_for('api_checkin_all_tasks') }}",
+            type: 'POST',
+            dataType: 'json',
+            success: function(response) {
+                let resultsText = "所有任务执行完毕。\n\n";
+                if (response.all_tasks_results && response.all_tasks_results.length > 0) {
+                    response.all_tasks_results.forEach(function(item, index) {
+                        resultsText += `任务 ${index + 1}: 用户 ${item.task.user_phone} -> 机器人 ${item.task.bot_username}\n`;
+                        resultsText += `  状态: ${item.result.success ? '成功' : '失败'}\n`;
+                        resultsText += `  消息: ${item.result.message}\n\n`;
+                    });
+                } else if (response.message) {
+                     resultsText += `消息: ${response.message}\n`;
+                } else {
+                    resultsText += "没有任务被执行或未收到明确结果。\n";
+                }
+                $('#checkin-results-pre').text(resultsText);
+                showAlert('所有签到任务已尝试执行。请查看下方结果。', 'info');
+            },
+            error: function(xhr) {
+                let errorMsg = '执行所有签到任务失败。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorMsg = xhr.responseJSON.message;
+                }
+                $('#checkin-results-pre').text(errorMsg);
+                showAlert(errorMsg, 'danger');
+            },
+            complete: function() {
+                $('#checkinAllBtn').prop('disabled', false).text('立即执行所有任务');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

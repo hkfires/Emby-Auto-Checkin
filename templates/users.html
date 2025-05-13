@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}用户管理 - Emby签到助手{% endblock %}
+
+{% block content %}
+<h2>用户管理</h2>
+<p>添加需要进行Telegram登录的用户手机号码。首次添加时，如果该号码未在当前设备登录过，系统会提示输入验证码。</p>
+
+<form id="addUserForm" class="mb-4">
+    <div class="form-row">
+        <div class="col-md-8">
+            <input type="text" class="form-control" id="phone" name="phone" placeholder="输入手机号码 (例如 +861234567890)" required>
+        </div>
+        <div class="col-md-4">
+            <button type="submit" class="btn btn-success btn-block">添加并尝试登录</button>
+        </div>
+    </div>
+</form>
+
+<h4>已添加用户</h4>
+{% if users %}
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>用户昵称</th>
+            <th>手机号码</th>
+            <th>TG用户名</th>
+            <th>TG名字</th>
+            <th>会话名</th>
+            <th>状态</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.nickname | default('N/A') }}</td>
+            <td>{{ user.phone | default('N/A') }}</td>
+            <td>{{ user.telegram_username | default('-') }}</td>
+            <td>{{ user.telegram_first_name | default('') }} {{ user.telegram_last_name | default('') }}</td>
+            <td>{{ user.session_name | default('N/A') }}</td>
+            <td>
+                {% if user.status == 'logged_in' %}
+                    <span class="badge badge-success">已登录</span>
+                {% elif user.status == 'requires_otp' %}
+                    <span class="badge badge-warning">等待验证码</span>
+                {% elif user.status == '2fa_needed' %}
+                    <span class="badge badge-danger">需要2FA密码</span>
+                {% else %}
+                    <span class="badge badge-danger">{{ user.status | default('未知') }}</span>
+                {% endif %}
+            </td>
+            <td>
+                <button class="btn btn-danger btn-sm delete-user-btn" data-nickname="{{ user.nickname }}">删除</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>还没有添加任何用户。</p>
+{% endif %}
+
+<div class="modal fade" id="otpModal" tabindex="-1" role="dialog" aria-labelledby="otpModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="otpModalLabel">请输入验证码</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>验证码已发送至 <strong id="otpPhoneDisplay"></strong>。请输入收到的验证码：</p>
+        <input type="text" class="form-control" id="otpCode" placeholder="验证码">
+        <input type="hidden" id="otpPhoneHidden">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary" id="submitOtpBtn">提交验证码</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#addUserForm').on('submit', function(e) {
+        e.preventDefault();
+        const phone = $('#phone').val();
+        const addUserBtn = $(this).find('button[type="submit"]');
+        addUserBtn.prop('disabled', true).text('处理中...');
+
+        $.ajax({
+            url: "{{ url_for('api_add_user') }}",
+            type: 'POST',
+            data: { phone: phone },
+            dataType: 'json',
+            success: function(response) {
+                showAlert(response.message, response.success || response.needs_otp ? 'info' : 'danger');
+                if (response.needs_otp) {
+                    $('#otpPhoneDisplay').text(response.phone);
+                    $('#otpPhoneHidden').val(response.phone);
+                    $('#otpModal').modal('show');
+                } else {
+                     setTimeout(function() { location.reload(); }, 1000);
+                }
+            },
+            error: function(xhr) {
+                let errorMsg = '添加用户失败。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorMsg = xhr.responseJSON.message;
+                }
+                showAlert(errorMsg, 'danger');
+            },
+            complete: function() {
+                addUserBtn.prop('disabled', false).text('添加并尝试登录');
+                 $('#phone').val('');
+            }
+        });
+    });
+
+    $('#submitOtpBtn').on('click', function() {
+        const otpCode = $('#otpCode').val();
+        const phone = $('#otpPhoneHidden').val();
+        $(this).prop('disabled', true).text('验证中...');
+
+        $.ajax({
+            url: "{{ url_for('api_submit_otp') }}",
+            type: 'POST',
+            data: { phone: phone, otp_code: otpCode },
+            dataType: 'json',
+            success: function(response) {
+                showAlert(response.message, response.success ? 'success' : 'danger');
+                $('#otpModal').modal('hide');
+                setTimeout(function() { location.reload(); }, 1000);
+            },
+            error: function(xhr) {
+                let errorMsg = 'OTP验证失败。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorMsg = xhr.responseJSON.message;
+                }
+                showAlert(errorMsg, 'danger', 'otpModal .modal-body');
+            },
+            complete: function() {
+                $('#submitOtpBtn').prop('disabled', false).text('提交验证码');
+                $('#otpCode').val('');
+            }
+        });
+    });
+
+    $('.delete-user-btn').on('click', function() {
+        const nickname = $(this).data('nickname');
+        if (confirm(`确定要删除用户 ${nickname} 吗？相关的会话文件和签到任务也会被删除。`)) {
+            $.ajax({
+                url: "{{ url_for('api_delete_user') }}",
+                type: 'POST',
+                data: { nickname: nickname },
+                dataType: 'json',
+                success: function(response) {
+                    showAlert(response.message, response.success ? 'success' : 'danger');
+                    if (response.success) {
+                        setTimeout(function() { location.reload(); }, 1000);
+                    }
+                },
+                error: function(xhr) {
+                    let errorMsg = '删除用户失败。';
+                    if (xhr.responseJSON && xhr.responseJSON.message) {
+                        errorMsg = xhr.responseJSON.message;
+                    }
+                    showAlert(errorMsg, 'danger');
+                }
+            });
+        }
+    });
+});
+</script>
+{% endblock %}
