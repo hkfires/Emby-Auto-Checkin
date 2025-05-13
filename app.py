@@ -706,4 +706,4 @@ async def api_checkin_all_tasks():
 if __name__ == '__main__':
     logger.info("启动Flask应用...")
     update_scheduler()
-    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+    app.run(debug=True, host='127.0.0.1', port=5050, use_reloader=False)

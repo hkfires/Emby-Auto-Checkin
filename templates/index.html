@@ -48,7 +48,7 @@
                         {{ log_entry.type }}
                     {% endif %}
                     <br>
-                    <strong>用户:</strong> {{ log_entry.user_phone }} <br>
+                    <strong>用户:</strong> {{ log_entry.user_nickname }} <br>
                     <strong>机器人:</strong> {{ log_entry.bot_username }} <br>
                     <strong>状态:</strong> <span class="badge badge-{{ 'success' if log_entry.success else 'danger' }}">{{ '成功' if log_entry.success else '失败' }}</span> <br>
                     <strong>消息:</strong> {{ log_entry.message }}
@@ -70,19 +70,17 @@
 
 {% block scripts %}
 <script>
-// Helper function to format ISO datetime string
 function formatLocalDateTime(isoString) {
     if (!isoString) return 'N/A';
     try {
         const date = new Date(isoString);
-        return date.toLocaleString(); // Uses browser's local timezone and format
+        return date.toLocaleString();
     } catch (e) {
-        return isoString; // Fallback to original string if parsing fails
+        return isoString;
     }
 }
 
 $(document).ready(function() {
-    // Update timestamps in the log to local time
     $('#todays-log-area .list-group-item').each(function() {
         const strongElement = $(this).find('strong:contains("时间:")');
         if (strongElement.length) {
@@ -105,7 +103,7 @@ $(document).ready(function() {
                 let resultsText = "所有任务执行完毕。\n\n";
                 if (response.all_tasks_results && response.all_tasks_results.length > 0) {
                     response.all_tasks_results.forEach(function(item, index) {
-                        resultsText += `任务 ${index + 1}: 用户 ${item.task.user_phone} -> 机器人 ${item.task.bot_username}\n`;
+                        resultsText += `任务 ${index + 1}: 用户 ${item.task.user_nickname} -> 机器人 ${item.task.bot_username}\n`;
                         resultsText += `  状态: ${item.result.success ? '成功' : '失败'}\n`;
                         resultsText += `  消息: ${item.result.message}\n\n`;
                     });
