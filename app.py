@@ -703,7 +703,8 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
 async def api_checkin_all_tasks():
     return await api_checkin_all_tasks_internal(source="http_manual_all")
 
+update_scheduler()
+
 if __name__ == '__main__':
     logger.info("启动Flask应用...")
-    update_scheduler()
     app.run(debug=True, host='127.0.0.1', port=5050, use_reloader=False)

@@ -154,5 +154,3 @@ def update_scheduler():
                  logger.error(f"为任务 (用户: {task_user_nickname}, 机器人: {bot_username}, Job ID: {job_id}) 添加调度时发生错误: {e_add_job}")
     else:
         logger.info("每日自动签到任务已禁用。所有单个任务作业已被移除。")
-
-update_scheduler()
