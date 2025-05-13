@@ -61,7 +61,7 @@
         <select id="manualCheckinUserSelect" class="form-control mb-3">
             {% for user in users %}
                 {% if user.status == 'logged_in' %}
-                    <option value="{{ user.phone }}">{{ user.name }} ({{ user.phone }})</option>
+                    <option value="{{ user.nickname }}">{{ user.nickname }}</option>
                 {% endif %}
             {% endfor %}
         </select>
@@ -137,11 +137,11 @@ $(document).ready(function() {
     });
 
     $('#submitManualCheckinBtn').on('click', function() {
-        const userPhone = $('#manualCheckinUserSelect').val();
+        const userNickname = $('#manualCheckinUserSelect').val();
         const botUsername = $('#manualCheckinBotHidden').val();
         const btn = $(this);
 
-        if (!userPhone) {
+        if (!userNickname) {
             showAlert('请选择一个用户进行签到。', 'warning', 'manual-checkin-result-area');
             return;
         }
@@ -152,7 +152,7 @@ $(document).ready(function() {
         $.ajax({
             url: "{{ url_for('api_manual_checkin') }}",
             type: 'POST',
-            data: { user_phone: userPhone, bot_username: botUsername },
+            data: { user_nickname: userNickname, bot_username: botUsername },
             dataType: 'json',
             success: function(response) {
                 const resultType = response.success ? 'success' : 'danger';
