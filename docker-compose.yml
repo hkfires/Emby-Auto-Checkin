@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "5055:5055"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
