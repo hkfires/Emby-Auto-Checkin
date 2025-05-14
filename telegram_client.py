@@ -57,19 +57,30 @@ async def telethon_check_in(api_id, api_hash, nickname_for_logging, session_name
                                 logger.info(f"用户 {nickname_for_logging}: '签到'按钮已点击。click() 返回: {type(click_callback_result)}")
 
                                 alert_message_text = None
+                                proceed_to_check_chat_messages = False 
+
                                 if hasattr(click_callback_result, 'message') and click_callback_result.message:
-                                    alert_message_text = click_callback_result.message
+                                    alert_message_text = click_callback_result.message 
                                     logger.info(f"用户 {nickname_for_logging}: 按钮点击后收到弹框提示: {alert_message_text}")
-                                    if "成功" in alert_message_text or \
-                                       ("已签到" in alert_message_text and not ("失败" in alert_message_text or "重复" in alert_message_text or "已达上限" in alert_message_text or "无法" in alert_message_text)):
+                                    
+                                    processed_alert = alert_message_text.strip()
+
+                                    if "成功" in processed_alert or \
+                                       ("已签到" in processed_alert and not ("失败" in processed_alert or "重复" in processed_alert or "已达上限" in processed_alert or "无法" in processed_alert)):
                                         result.update({"success": True, "message": alert_message_text})
-                                    elif "已经签到过" in alert_message_text or "今日已签" in alert_message_text or "重复签到" in alert_message_text:
+                                    elif "已经签到过" in processed_alert or "今日已签" in processed_alert or "重复签到" in processed_alert:
                                         result.update({"success": False, "message": alert_message_text})
-                                    else:
+                                    elif "Done" in alert_message_text: 
+                                        logger.info(f"用户 {nickname_for_logging}: 弹框消息 \"{alert_message_text}\" 包含 'Done' 但非明确成功/失败，将检查后续聊天消息。")
+                                        proceed_to_check_chat_messages = True 
+                                    else: 
                                         result.update({"success": False, "message": alert_message_text + " (弹框内容未知)"})
-                                else:
-                                    logger.info(f"用户 {nickname_for_logging}: 按钮点击后未直接返回弹框。等待后续聊天消息...")
-                                    await asyncio.sleep(2.5)
+                                else: 
+                                    proceed_to_check_chat_messages = True 
+
+                                if proceed_to_check_chat_messages:
+                                    logger.info(f"用户 {nickname_for_logging}: 等待后续聊天消息 (原因: 无弹框，或弹框为通用确认如 'Done' 且非明确结果)。")
+                                    await asyncio.sleep(2.5) 
                                     messages_after_click = await client.get_messages(bot_entity, limit=1)
                                     if messages_after_click:
                                         chat_response_text = messages_after_click[0].text
@@ -83,7 +94,8 @@ async def telethon_check_in(api_id, api_hash, nickname_for_logging, session_name
                                             result.update({"success": False, "message": chat_response_text + " (未知情况)"})
                                     else:
                                         logger.warning(f"用户 {nickname_for_logging}: 点击按钮后也未收到聊天响应。")
-                                        result.update({"success": False, "message": "按钮已点击，但未收到机器人后续响应（弹框或聊天消息）。"})
+                                        if result.get("message") == "签到过程未启动或未完成。": 
+                                            result.update({"success": False, "message": "按钮已点击，但未收到机器人后续响应（弹框或聊天消息）。"})
                             except Exception as e_click:
                                 logger.error(f"用户 {nickname_for_logging}: 点击签到按钮或处理后续响应时失败: {e_click}")
                                 result.update({"success": False, "message": f"点击签到按钮或处理后续响应失败: {e_click}"})

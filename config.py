@@ -1,7 +1,8 @@
 import json
 import os
 
-CONFIG_FILE = 'config_data.json'
+DATA_DIR = "data"
+CONFIG_FILE = os.path.join(DATA_DIR, 'config_data.json')
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):

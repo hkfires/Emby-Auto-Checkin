@@ -15,6 +15,9 @@ from utils import format_datetime_filter, get_masked_api_credentials
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
@@ -274,7 +277,7 @@ async def api_add_user():
     if phone in temp_otp_store and temp_otp_store[phone].get('hash'):
         return jsonify({"success": True, "message": "该手机号已发送验证码，请直接输入验证码。", "needs_otp": True, "phone": phone, "status": "requires_otp"})
 
-    temp_otp_flow_session_name = f"otp_flow_{re.sub(r'[^0-9a-zA-Z]', '', phone)}"
+    temp_otp_flow_session_name = os.path.join(DATA_DIR, f"otp_flow_{re.sub(r'[^0-9a-zA-Z]', '', phone)}")
     client = TelegramClient(temp_otp_flow_session_name, api_id, api_hash)
     message = "发送验证码时发生未知错误。"
     needs_otp = False
@@ -378,13 +381,13 @@ async def api_submit_otp():
                 count += 1
             
             final_nickname_for_response = final_nickname
-            final_session_name_for_system = get_session_name(final_nickname)
+            final_session_name_for_system = os.path.join(DATA_DIR, get_session_name(final_nickname))
             
             await client.disconnect()
             client = None 
 
-            old_session_path = f"{otp_flow_session_name}.session"
-            new_session_path = f"{final_session_name_for_system}.session"
+            old_session_path = f"{otp_flow_session_name}.session" # otp_flow_session_name already includes DATA_DIR
+            new_session_path = f"{final_session_name_for_system}.session" # final_session_name_for_system now includes DATA_DIR
 
             if os.path.exists(old_session_path):
                 os.rename(old_session_path, new_session_path)
@@ -464,7 +467,7 @@ def api_delete_user():
     if 'checkin_tasks' in config:
         config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t.get('user_nickname') != nickname_to_delete]
 
-    session_file_to_delete = get_session_name(nickname_to_delete) + ".session"
+    session_file_to_delete = os.path.join(DATA_DIR, f"{get_session_name(nickname_to_delete)}.session")
     if os.path.exists(session_file_to_delete):
         try:
             os.remove(session_file_to_delete)
@@ -707,4 +710,4 @@ update_scheduler()
 
 if __name__ == '__main__':
     logger.info("启动Flask应用...")
-    app.run(debug=True, host='127.0.0.1', port=5050, use_reloader=False)
+    app.run(debug=True, host='127.0.0.1', port=5055, use_reloader=False)

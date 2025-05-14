@@ -2,7 +2,8 @@ import json
 import os
 from datetime import date, datetime
 
-DAILY_CHECKIN_LOG_FILE = 'daily_checkin_log.json'
+DATA_DIR = "data"
+DAILY_CHECKIN_LOG_FILE = os.path.join(DATA_DIR, 'daily_checkin_log.json')
 
 def load_daily_checkin_log():
     today_str = date.today().isoformat()
