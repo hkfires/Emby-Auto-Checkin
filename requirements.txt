@@ -3,3 +3,4 @@ Flask[async]
 apscheduler
 Flask-Login
 Werkzeug
+gunicorn

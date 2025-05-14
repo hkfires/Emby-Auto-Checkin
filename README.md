@@ -1,22 +1,19 @@
 # Emby 自动签到工具
 
-## 一、使用 uWSGI 进行部署
+## 目前适配Emby
 
-### 请提前安装以下程序
+*   HKA Emby-自建公益服
+*   Beebi（比比）
+*   YounoEmby
 
-```
-sudo apt update
-sudo apt install build-essential python3-dev
-```
-
-## 二、使用 Docker 部署
+## 使用 Docker 部署
 
 您可以使用 Docker 和 Docker Compose 轻松部署此应用程序。
 
 ### 先决条件
 
 *   [Docker](https://docs.docker.com/get-docker/)
-*   [Docker Compose](https://docs.docker.com/compose/install/) (通常随 Docker Desktop 一起安装)
+*   [Docker Compose](https://docs.docker.com/compose/install/) (通常随 Docker 一起安装)
 
 ### 部署步骤
 

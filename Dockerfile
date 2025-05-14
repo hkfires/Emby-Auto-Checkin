@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 5055
 
 # 定义容器启动时运行的命令
-CMD ["python", "app.py"]
+CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5055", "app:app"]
