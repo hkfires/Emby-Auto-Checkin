@@ -9,12 +9,12 @@
 <form id="addTaskForm" class="mb-4">
     <div class="form-row align-items-end">
         <div class="col-md-5">
-            <label for="user_nickname">选择用户</label>
-            <select class="form-control" id="user_nickname" name="user_nickname" required>
+            <label for="user_telegram_id">选择用户</label>
+            <select class="form-control" id="user_telegram_id" name="user_telegram_id" required>
                 <option value="">-- 选择一个已登录的用户 --</option>
                 {% for user in users %}
-                    {% if user.status == 'logged_in' %}
-                        <option value="{{ user.nickname }}">{{ user.nickname }} ({{ user.telegram_username | default(user.telegram_first_name) | default('TG账号') }})</option>
+                    {% if user.status == 'logged_in' and user.telegram_id %}
+                        <option value="{{ user.telegram_id }}">{{ user.nickname }} ({{ user.telegram_id }})</option>
                     {% endif %}
                 {% endfor %}
             </select>
@@ -47,10 +47,10 @@
     <tbody>
         {% for task in tasks %}
         <tr>
-            <td>{{ task.user_nickname }}</td>
+            <td>{{ task.display_nickname }}</td> {# Changed from task.user_nickname, will be populated by backend #}
             <td>@{{ task.bot_username }}</td>
             <td>
-                <button class="btn btn-danger btn-sm delete-task-btn" data-nickname="{{ task.user_nickname }}" data-bot="{{ task.bot_username }}">删除</button>
+                <button class="btn btn-danger btn-sm delete-task-btn" data-tgid="{{ task.user_telegram_id }}" data-bot="{{ task.bot_username }}">删除</button>
             </td>
         </tr>
         {% endfor %}
@@ -67,10 +67,10 @@
 $(document).ready(function() {
     $('#addTaskForm').on('submit', function(e) {
         e.preventDefault();
-        const user_nickname = $('#user_nickname').val(); // Changed
+        const user_telegram_id = $('#user_telegram_id').val();
         const bot_username = $('#bot_username_task').val();
 
-        if (!user_nickname || !bot_username) { // Changed
+        if (!user_telegram_id || !bot_username) {
             showAlert('请选择用户和机器人。', 'warning');
             return;
         }
@@ -78,7 +78,7 @@ $(document).ready(function() {
         $.ajax({
             url: "{{ url_for('api_add_task') }}",
             type: 'POST',
-            data: { user_nickname: user_nickname, bot_username: bot_username }, // Changed
+            data: { user_telegram_id: user_telegram_id, bot_username: bot_username },
             dataType: 'json',
             success: function(response) {
                 showAlert(response.message, response.success ? 'success' : 'danger');
@@ -97,13 +97,15 @@ $(document).ready(function() {
     });
 
     $('.delete-task-btn').on('click', function() {
-        const user_nickname = $(this).data('nickname'); // Changed
+        const user_telegram_id = $(this).data('tgid');
         const bot_username = $(this).data('bot');
-        if (confirm(`确定要删除任务：用户 ${user_nickname} -> 机器人 @${bot_username} 吗？`)) { // Changed
+        const user_display_name = $(this).closest('tr').find('td:first').text();
+
+        if (confirm(`确定要删除任务：用户 ${user_display_name} (TGID: ${user_telegram_id}) -> 机器人 @${bot_username} 吗？`)) {
             $.ajax({
                 url: "{{ url_for('api_delete_task') }}",
                 type: 'POST',
-                data: { user_nickname: user_nickname, bot_username: bot_username }, // Changed
+                data: { user_telegram_id: user_telegram_id, bot_username: bot_username },
                 dataType: 'json',
                 success: function(response) {
                     showAlert(response.message, response.success ? 'success' : 'danger');

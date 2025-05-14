@@ -386,8 +386,8 @@ async def api_submit_otp():
             await client.disconnect()
             client = None 
 
-            old_session_path = f"{otp_flow_session_name}.session" # otp_flow_session_name already includes DATA_DIR
-            new_session_path = f"{final_session_name_for_system}.session" # final_session_name_for_system now includes DATA_DIR
+            old_session_path = f"{otp_flow_session_name}.session"
+            new_session_path = f"{final_session_name_for_system}.session"
 
             if os.path.exists(old_session_path):
                 os.rename(old_session_path, new_session_path)
@@ -462,10 +462,21 @@ def api_delete_user():
     if not user_to_delete_obj:
         return jsonify({"success": False, "message": "未找到该昵称的用户。"}), 404
 
+    user_telegram_id_to_delete = user_to_delete_obj.get('telegram_id')
+
     config['users'] = [u for u in config.get('users', []) if u.get('nickname') != nickname_to_delete]
     
-    if 'checkin_tasks' in config:
-        config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t.get('user_nickname') != nickname_to_delete]
+    if 'checkin_tasks' in config and user_telegram_id_to_delete:
+        config['checkin_tasks'] = [
+            t for t in config.get('checkin_tasks', []) 
+            if t.get('user_telegram_id') != user_telegram_id_to_delete
+        ]
+    elif 'checkin_tasks' in config:
+        config['checkin_tasks'] = [
+            t for t in config.get('checkin_tasks', [])
+            if t.get('user_nickname') != nickname_to_delete
+        ]
+
 
     session_file_to_delete = os.path.join(DATA_DIR, f"{get_session_name(nickname_to_delete)}.session")
     if os.path.exists(session_file_to_delete):
@@ -477,7 +488,8 @@ def api_delete_user():
 
     if len(config.get('users', [])) < original_user_count:
         save_config(config)
-        logger.info(f"用户 {nickname_to_delete} 已删除。")
+        update_scheduler()
+        logger.info(f"用户 {nickname_to_delete} 已删除，并更新了调度器。")
         return jsonify({"success": True, "message": f"用户 {nickname_to_delete} 已删除。"})
     else:
         return jsonify({"success": False, "message": "删除用户时发生错误或用户未找到。"}), 404
@@ -514,9 +526,11 @@ def api_delete_bot():
 
     if bot_to_delete in config['bots']:
         config['bots'].remove(bot_to_delete)
-        config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t['bot_username'] != bot_to_delete]
+        if 'checkin_tasks' in config:
+            config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t.get('bot_username') != bot_to_delete]
         save_config(config)
-        logger.info(f"机器人 {bot_to_delete} 已删除。")
+        update_scheduler()
+        logger.info(f"机器人 {bot_to_delete} 已删除，并更新了调度器。")
         return jsonify({"success": True, "message": "机器人已删除。"})
     else:
         return jsonify({"success": False, "message": "未找到该机器人。"}), 404
@@ -527,42 +541,65 @@ def tasks_page():
     config = load_config()
     if not config.get('api_id') or not config.get('api_hash'):
         return redirect(url_for('setup_page'))
-    logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in']
+    logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
     valid_tasks = []
     if 'checkin_tasks' in config:
-        for task in config['checkin_tasks']:
-            if 'user_nickname' in task and 'bot_username' in task:
-                valid_tasks.append(task)
-            elif 'user_phone' in task:
-                user_obj = next((u for u in config.get('users', []) if u.get('phone') == task['user_phone']), None)
-                if user_obj and 'nickname' in user_obj:
-                    task['user_nickname'] = user_obj['nickname']
-                    del task['user_phone']
-                    valid_tasks.append(task)
+        all_users_list = config.get('users', [])
+        user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
+
+        for task_data in config.get('checkin_tasks', []):
+            if 'user_telegram_id' in task_data and 'bot_username' in task_data:
+                user_for_task = user_map_by_id.get(task_data['user_telegram_id'])
+                if user_for_task:
+                    task_data['display_nickname'] = user_for_task.get('nickname', f"TGID: {task_data['user_telegram_id']}")
+                else:
+                    task_data['display_nickname'] = f"未知用户 (TGID: {task_data['user_telegram_id']})"
+                valid_tasks.append(task_data)
+            elif 'user_nickname' in task_data and 'bot_username' in task_data:
+                legacy_user = next((u for u in all_users_list if u.get('nickname') == task_data['user_nickname']), None)
+                if legacy_user and legacy_user.get('telegram_id'):
+                    task_data['user_telegram_id'] = legacy_user['telegram_id'] 
+                    task_data['display_nickname'] = legacy_user['nickname']
+                else: 
+                    task_data['display_nickname'] = task_data['user_nickname'] + " (旧数据/TGID未知)"
+                    task_data['user_telegram_id'] = task_data.get('user_telegram_id') 
+                valid_tasks.append(task_data)
     
     return render_template('tasks.html', tasks=valid_tasks, users=logged_in_users, bots=config.get('bots', []))
 
 @app.route('/api/tasks/add', methods=['POST'])
 def api_add_task():
     config = load_config()
-    user_nickname = request.form.get('user_nickname')
+    user_telegram_id_str = request.form.get('user_telegram_id')
     bot_username = request.form.get('bot_username')
 
-    if not user_nickname or not bot_username:
+    if not user_telegram_id_str or not bot_username:
         return jsonify({"success": False, "message": "未选择用户或机器人。"}), 400
+    
+    try:
+        user_telegram_id = int(user_telegram_id_str)
+    except ValueError:
+        return jsonify({"success": False, "message": "无效的用户TG ID格式。"}), 400
+
+    user_for_task = next((u for u in config.get('users', []) if u.get('telegram_id') == user_telegram_id and u.get('status') == 'logged_in'), None)
+    if not user_for_task:
+        return jsonify({"success": False, "message": "选择的用户无效、未登录或缺少TG ID。"}), 400
+    
+    user_nickname_for_log = user_for_task.get('nickname', f"TGID_{user_telegram_id}")
 
     new_task = {
-        "user_nickname": user_nickname,
+        "user_telegram_id": user_telegram_id, 
         "bot_username": bot_username,
         "last_auto_checkin_status": None,
-        "last_auto_checkin_time": None
+        "last_auto_checkin_time": None,
+        "last_scheduled_date": None 
     }
     
     if 'checkin_tasks' not in config or not isinstance(config['checkin_tasks'], list):
         config['checkin_tasks'] = []
 
     task_exists = any(
-        t.get('user_nickname') == new_task['user_nickname'] and t.get('bot_username') == new_task['bot_username']
+        t.get('user_telegram_id') == new_task['user_telegram_id'] and t.get('bot_username') == new_task['bot_username']
         for t in config['checkin_tasks']
     )
 
@@ -570,7 +607,7 @@ def api_add_task():
         config['checkin_tasks'].append(new_task)
         save_config(config)
         update_scheduler() 
-        logger.info(f"签到任务已添加: 用户 {user_nickname} -> 机器人 {bot_username}")
+        logger.info(f"签到任务已添加: 用户 {user_nickname_for_log} (TGID: {user_telegram_id}) -> 机器人 {bot_username}")
         return jsonify({"success": True, "message": "签到任务已添加。"})
     else:
         return jsonify({"success": False, "message": "该签到任务已存在。"}), 400
@@ -578,25 +615,34 @@ def api_add_task():
 @app.route('/api/tasks/delete', methods=['POST'])
 def api_delete_task():
     config = load_config()
-    user_nickname = request.form.get('user_nickname')
+    user_telegram_id_str = request.form.get('user_telegram_id')
     bot_username = request.form.get('bot_username')
+
+    if not user_telegram_id_str or not bot_username:
+        return jsonify({"success": False, "message": "未提供用户TG ID或机器人名称。"}), 400
+
+    try:
+        user_telegram_id = int(user_telegram_id_str)
+    except ValueError:
+        return jsonify({"success": False, "message": "无效的用户TG ID格式。"}), 400
 
     if 'checkin_tasks' not in config or not isinstance(config['checkin_tasks'], list):
         config['checkin_tasks'] = []
-
-    task_to_find_dict = {"user_nickname": user_nickname, "bot_username": bot_username}
     
+    user_for_log = next((u for u in config.get('users', []) if u.get('telegram_id') == user_telegram_id), None)
+    log_identifier = user_for_log.get('nickname') if user_for_log else f"TGID_{user_telegram_id}"
+
     original_task_count = len(config['checkin_tasks'])
     
     config['checkin_tasks'] = [
         t for t in config['checkin_tasks']
-        if not (t.get('user_nickname') == user_nickname and t.get('bot_username') == bot_username)
+        if not (t.get('user_telegram_id') == user_telegram_id and t.get('bot_username') == bot_username)
     ]
 
     if len(config['checkin_tasks']) < original_task_count:
         save_config(config)
         update_scheduler()
-        logger.info(f"签到任务已删除: 用户 {user_nickname} -> 机器人 {bot_username}")
+        logger.info(f"签到任务已删除: 用户 {log_identifier} (TGID: {user_telegram_id}) -> 机器人 {bot_username}")
         return jsonify({"success": True, "message": "签到任务已删除。"})
     else:
         return jsonify({"success": False, "message": "未找到该签到任务。"}), 404
@@ -610,22 +656,29 @@ async def api_manual_checkin():
     if not api_id or not api_hash:
         return jsonify({"success": False, "message": "请先设置API ID和API Hash。"}), 400
 
-    user_nickname = request.form.get('user_nickname')
+    user_telegram_id_str = request.form.get('user_telegram_id') 
     bot_username = request.form.get('bot_username')
 
-    if not user_nickname or not bot_username:
+    if not user_telegram_id_str or not bot_username: 
         return jsonify({"success": False, "message": "未选择用户或机器人。"}), 400
+    
+    try:
+        user_telegram_id = int(user_telegram_id_str)
+    except ValueError:
+        return jsonify({"success": False, "message": "无效的用户TG ID格式。"}), 400
 
-    user_config = next((u for u in config.get('users', []) if u.get('nickname') == user_nickname and u.get('status') == 'logged_in'), None)
+    user_config = next((u for u in config.get('users', []) if u.get('telegram_id') == user_telegram_id and u.get('status') == 'logged_in'), None)
     if not user_config:
-        return jsonify({"success": False, "message": f"用户昵称 '{user_nickname}' 未找到或未登录。"}), 400
+        return jsonify({"success": False, "message": f"用户TG ID '{user_telegram_id}' 未找到或未登录。"}), 400
 
     session_name = user_config.get('session_name')
-    result = await telethon_check_in(api_id, api_hash, user_nickname, session_name, bot_username)
+    user_nickname_for_operation = user_config.get('nickname', f"TGID_{user_telegram_id}") 
+    
+    result = await telethon_check_in(api_id, api_hash, user_nickname_for_operation, session_name, bot_username)
 
     log_entry = {
         "type": "manual",
-        "user_nickname": user_nickname,
+        "user_nickname": user_nickname_for_operation, 
         "bot_username": bot_username,
         "success": result.get("success"),
         "message": result.get("message")
@@ -657,34 +710,53 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
 
 
     results_list = []
-    users_config = config.get('users', [])
+    all_users_list = config.get('users', [])
+    user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
+    user_map_by_nickname = {user['nickname']: user for user in all_users_list if 'nickname' in user}
+
 
     for task_config_entry in tasks_to_run:
-        user_nickname = task_config_entry.get('user_nickname')
         bot_username = task_config_entry.get('bot_username')
+        user_telegram_id = task_config_entry.get('user_telegram_id')
+        legacy_user_nickname = task_config_entry.get('user_nickname') 
 
-        if not user_nickname or not bot_username:
-            logger.warning(f"跳过格式不正确的任务: {task_config_entry}")
+        user_config = None
+        log_nickname = "未知用户"
+
+        if user_telegram_id:
+            user_config = user_map_by_id.get(user_telegram_id)
+            if user_config:
+                log_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}")
+            else: 
+                log_nickname = f"TGID_{user_telegram_id} (用户不存在)"
+        elif legacy_user_nickname: 
+            user_config = user_map_by_nickname.get(legacy_user_nickname)
+            if user_config:
+                log_nickname = legacy_user_nickname
+            else: 
+                log_nickname = f"{legacy_user_nickname} (用户不存在)"
+        
+        if not bot_username or not (user_telegram_id or legacy_user_nickname) :
+            logger.warning(f"跳过格式不正确的任务 (缺少TGID/昵称或机器人名): {task_config_entry}")
             continue
 
-        user_config = next((u for u in users_config if u.get('nickname') == user_nickname and u.get('status') == 'logged_in'), None)
-
-        current_task_result = {"success": False, "message": f"用户 {user_nickname} 未登录或配置不正确。"}
-        if user_config:
+        current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录、配置不正确或不存在。"}
+        
+        if user_config and user_config.get('status') == 'logged_in':
             session_name = user_config.get('session_name')
             try:
-                current_task_result = await telethon_check_in(api_id, api_hash, user_nickname, session_name, bot_username)
+                current_task_result = await telethon_check_in(api_id, api_hash, log_nickname, session_name, bot_username)
             except Exception as e_checkin:
-                logger.error(f"执行全部签到任务中，用户 {user_nickname}->{bot_username} 时发生异常: {e_checkin}")
+                logger.error(f"执行全部签到任务中，用户 {log_nickname}->{bot_username} 时发生异常: {e_checkin}")
                 current_task_result = {"success": False, "message": f"签到时发生内部错误: {str(e_checkin)}"}
-        else:
-            logger.warning(f"全部签到跳过任务: 用户 {user_nickname} -> {bot_username}，因为用户未登录或配置错误。")
+        elif user_config: 
+             current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录。"}
 
-        results_list.append({"task": {"user_nickname": user_nickname, "bot_username": bot_username}, "result": current_task_result})
+        results_list.append({"task": {"user_identifier": log_nickname, "bot_username": bot_username}, "result": current_task_result})
 
         log_entry = {
             "type": source,
-            "user_nickname": user_nickname,
+            "user_nickname": log_nickname, 
             "bot_username": bot_username,
             "success": current_task_result.get("success"),
             "message": current_task_result.get("message")

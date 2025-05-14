@@ -40,6 +40,9 @@ def load_config():
             for task in config.get("checkin_tasks", []):
                 task.setdefault("last_auto_checkin_status", None)
                 task.setdefault("last_auto_checkin_time", None)
+                task.setdefault("last_scheduled_date", None)
+                task.setdefault("scheduled_hour", None)
+                task.setdefault("scheduled_minute", None)
             return config
     except (FileNotFoundError, json.JSONDecodeError):
         return {

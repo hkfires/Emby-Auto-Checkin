@@ -23,9 +23,7 @@
     <thead>
         <tr>
             <th>用户昵称</th>
-            <th>手机号码</th>
-            <th>TG用户名</th>
-            <th>TG名字</th>
+            <th>TG ID</th>
             <th>会话名</th>
             <th>状态</th>
             <th>操作</th>
@@ -34,12 +32,10 @@
     <tbody>
         {% for user in users %}
         <tr>
-            <td>{{ user.nickname | default('N/A') }}</td>
-            <td>{{ user.phone | default('N/A') }}</td>
-            <td>{{ user.telegram_username | default('-') }}</td>
-            <td>{{ user.telegram_first_name | default('') }} {{ user.telegram_last_name | default('') }}</td>
-            <td>{{ user.session_name | default('N/A') }}</td>
-            <td>
+            <td style="vertical-align: middle;">{{ user.nickname | default('N/A') }}</td>
+            <td style="vertical-align: middle;">{{ user.telegram_id | default('N/A') }}</td>
+            <td style="vertical-align: middle;">{{ user.session_name | default('N/A') }}</td>
+            <td style="vertical-align: middle;">
                 {% if user.status == 'logged_in' %}
                     <span class="badge badge-success">已登录</span>
                 {% elif user.status == 'requires_otp' %}
@@ -50,7 +46,7 @@
                     <span class="badge badge-danger">{{ user.status | default('未知') }}</span>
                 {% endif %}
             </td>
-            <td>
+            <td style="vertical-align: middle;">
                 <button class="btn btn-danger btn-sm delete-user-btn" data-nickname="{{ user.nickname }}">删除</button>
             </td>
         </tr>
