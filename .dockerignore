@@ -1,6 +1,11 @@
 __pycache__
 .gitignore
+.dockerignore
+.git
 .venv
 data
 *.session
 *.json
+README.md
+Dockerfile
+docker-compose.yml
