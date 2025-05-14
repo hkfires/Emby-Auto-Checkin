@@ -30,7 +30,7 @@
     在项目的根目录 (包含 `Dockerfile` 和 `docker-compose.yml` 文件的目录) 中，打开终端并运行以下命令：
 
     ```bash
-    docker-compose up -d
+    docker compose up -d
     ```
     这个命令会：
     *   根据 `Dockerfile` 构建 Docker 镜像 (如果尚未构建)。
@@ -49,7 +49,7 @@
 要停止应用程序，请在项目根目录的终端中运行：
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### 查看日志
@@ -57,7 +57,7 @@ docker-compose down
 要查看容器的实时日志，可以运行：
 
 ```bash
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ### 更新程序
@@ -69,5 +69,5 @@ docker-compose logs -f
 git pull
 
 # 构建并重启服务
-docker-compose up --build -d
+docker compose up --build -d
 ```
