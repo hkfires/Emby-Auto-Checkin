@@ -7,6 +7,10 @@ WORKDIR /app
 # 将依赖文件复制到工作目录
 COPY requirements.txt .
 
+# 设置时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # 安装依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
