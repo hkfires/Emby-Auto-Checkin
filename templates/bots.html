@@ -40,7 +40,7 @@
     <tbody>
         {% for bot_item in bots %}
         <tr>
-            <td>@{{ bot_item.username }}</td>
+            <td>{{ bot_item.username }}</td>
             <td><span class="badge bg-primary">{{ bot_item.strategy_display_name | default(bot_item.strategy) }}</span></td>
             <td>
                 <button class="btn btn-info btn-sm manual-checkin-btn" data-bot="{{ bot_item.username }}" data-strategy="{{ bot_item.strategy }}" {% if not users or users | selectattr('status', 'equalto', 'logged_in') | list | length == 0 %}disabled title="没有已登录的用户可用于签到"{% endif %}>

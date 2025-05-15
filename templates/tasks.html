@@ -41,7 +41,7 @@
         <tr>
             <th>用户昵称</th>
             <th>机器人用户名</th>
-            <th>机器人签到策略</th>
+            <th>签到策略</th>
             <th>操作</th>
         </tr>
     </thead>
@@ -49,7 +49,7 @@
         {% for task in tasks %}
         <tr>
             <td>{{ task.display_nickname }}</td>
-            <td>@{{ task.bot_username }}</td>
+            <td>{{ task.bot_username }}</td>
             <td><span class="badge bg-info">{{ task.bot_strategy_display_name | default(task.bot_strategy) }}</span></td> {# Use display name #}
             <td>
                 <button class="btn btn-danger btn-sm delete-task-btn" data-tgid="{{ task.user_telegram_id }}" data-bot="{{ task.bot_username }}">删除</button>

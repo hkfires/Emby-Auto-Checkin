@@ -516,7 +516,6 @@ def api_delete_user():
             if t.get('user_nickname') != nickname_to_delete
         ]
 
-
     session_file_to_delete = os.path.join(DATA_DIR, f"{get_session_name(nickname_to_delete)}.session")
     if os.path.exists(session_file_to_delete):
         try:
@@ -588,34 +587,22 @@ def api_add_bot():
     if 'bots' not in config or not isinstance(config['bots'], list):
         config['bots'] = []
     
-    migrated_bots = []
-    made_changes_in_migration = False
-    for item in config['bots']:
-        if isinstance(item, str):
-            migrated_bots.append({'username': item, 'strategy': 'start_button_alert'})
-            made_changes_in_migration = True
-        elif isinstance(item, dict) and 'username' in item:
-             if 'strategy' not in item:
-                item['strategy'] = 'start_button_alert'
-                made_changes_in_migration = True
-             migrated_bots.append(item)
-    config['bots'] = migrated_bots
+    existing_bot = next((b for b in config.get('bots', []) if isinstance(b, dict) and b.get('username') == bot_username), None)
 
-    if not any(b.get('username') == bot_username for b in config['bots']):
+    if not existing_bot:
         new_bot_entry = {"username": bot_username, "strategy": strategy}
         config['bots'].append(new_bot_entry)
         save_config(config)
         logger.info(f"机器人 {bot_username} (策略: {strategy}) 已添加。")
         return jsonify({"success": True, "message": "机器人已添加。"})
     else:
-        existing_bot = next((b for b in config['bots'] if b.get('username') == bot_username), None)
-        if existing_bot and existing_bot.get('strategy') != strategy:
+        if existing_bot.get('strategy') != strategy:
              existing_bot['strategy'] = strategy
              save_config(config)
              logger.info(f"机器人 {bot_username} 的策略已更新为: {strategy}。")
              return jsonify({"success": True, "message": f"机器人 {bot_username} 的策略已更新。"})
-        
-        return jsonify({"success": False, "message": "该机器人已存在且策略相同。"}), 400
+        else:
+            return jsonify({"success": False, "message": "该机器人已存在且策略相同。"}), 400
 
 @app.route('/api/bots/delete', methods=['POST'])
 def api_delete_bot():
@@ -625,7 +612,7 @@ def api_delete_bot():
         return jsonify({"success": False, "message": "未提供机器人用户名。"}), 400
 
     original_bot_count = len(config.get('bots', []))
-    config['bots'] = [b for b in config.get('bots', []) if isinstance(b, dict) and b.get('username') != bot_to_delete_username or isinstance(b, str) and b != bot_to_delete_username]
+    config['bots'] = [b for b in config.get('bots', []) if not (isinstance(b, dict) and b.get('username') == bot_to_delete_username)]
     
     if len(config.get('bots',[])) < original_bot_count:
         if 'checkin_tasks' in config:
@@ -693,8 +680,8 @@ def tasks_page():
                 else:
                     task_data['display_nickname'] = f"未知用户 (TGID: {task_data['user_telegram_id']})"
                 
-                task_data['bot_strategy'] = bot_strategy_map.get(task_data['bot_username'], 'start_button_alert') # Keep key for internal use if needed
-                task_data['bot_strategy_display_name'] = bot_strategy_display_map.get(task_data['bot_username'], task_data['bot_strategy']) # Add display name
+                task_data['bot_strategy'] = bot_strategy_map.get(task_data['bot_username'], 'start_button_alert')
+                task_data['bot_strategy_display_name'] = bot_strategy_display_map.get(task_data['bot_username'], task_data['bot_strategy'])
                 valid_tasks.append(task_data)
     
     return render_template('tasks.html', tasks=valid_tasks, users=logged_in_users, bots=bots_data)
