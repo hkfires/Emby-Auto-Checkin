@@ -27,7 +27,7 @@
                     <a class="nav-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">首页</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'setup_page' %}active{% endif %}" href="{{ url_for('setup_page') }}">API设置</a>
+                    <a class="nav-link {% if request.endpoint == 'api_settings_page' %}active{% endif %}" href="{{ url_for('api_settings_page') }}">TG API 设置</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link {% if request.endpoint == 'users_page' %}active{% endif %}" href="{{ url_for('users_page') }}">用户管理</a>
@@ -36,7 +36,10 @@
                     <a class="nav-link {% if request.endpoint == 'bots_page' %}active{% endif %}" href="{{ url_for('bots_page') }}">机器人管理</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'tasks_page' %}active{% endif %}" href="{{ url_for('tasks_page') }}">签到任务</a>
+                    <a class="nav-link {% if request.endpoint == 'scheduler_settings_page' %}active{% endif %}" href="{{ url_for('scheduler_settings_page') }}">自动签到设置</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint == 'tasks_page' %}active{% endif %}" href="{{ url_for('tasks_page') }}">签到任务管理</a>
                 </li>
             </ul>
             <ul class="navbar-nav ml-auto">

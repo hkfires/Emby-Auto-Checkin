@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}API 设置 - Emby签到助手{% endblock %}
+
+{% block content %}
+<h2>Telegram API 设置</h2>
+<p>请输入您的 Telegram API ID 和 API Hash。您可以从 <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a> 获取这些信息。</p>
+<form method="POST" action="{{ url_for('api_settings_page') }}">
+    <div class="form-group">
+        <label for="api_id">API ID</label>
+        <input type="text" class="form-control" id="api_id" name="api_id" value="{{ api_id_display if api_id_display is not none else '' }}" placeholder="{{ '已设置，如需修改请输入新值' if original_api_id else '请输入API ID' }}" required>
+    </div>
+    <div class="form-group">
+        <label for="api_hash">API Hash</label>
+        <input type="text" class="form-control" id="api_hash" name="api_hash" value="{{ api_hash_display if api_hash_display is not none else '' }}" placeholder="{{ '已设置，如需修改请输入新值' if original_api_hash else '请输入API Hash' }}" required>
+    </div>
+    <button type="submit" class="btn btn-primary mt-3">保存API设置</button>
+</form>
+{% endblock %}

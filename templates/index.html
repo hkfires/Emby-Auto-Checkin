@@ -8,7 +8,7 @@
     <p class="lead">通过本面板管理您的Telegram API设置、用户、机器人以及自动签到任务。</p>
     <hr class="my-4">
     <p>如果这是您首次使用，请先前往“API设置”页面配置您的Telegram API ID和API Hash。</p>
-    <a class="btn btn-primary btn-lg" href="{{ url_for('setup_page') }}" role="button">API设置</a>
+    <a class="btn btn-primary btn-lg" href="{{ url_for('api_settings_page') }}" role="button">API设置</a>
 </div>
 
 <h2>快速操作</h2>
@@ -31,6 +31,11 @@
 
 <hr class="my-4">
 <h2>今日签到日志</h2>
+{% if config.scheduler_enabled %}
+    <p>自动签到任务已启用。各任务将在 {{ "%02d:%02d"|format(config.scheduler_range_start_hour, config.scheduler_range_start_minute) }} - {{ "%02d:%02d"|format(config.scheduler_range_end_hour, config.scheduler_range_end_minute) }} (北京时间) 范围内随机执行。</p>
+{% else %}
+    <p>自动签到任务当前已禁用。您可以前往“自动签到设置”页面启用并配置。</p>
+{% endif %}
 <div id="todays-log-area" style="margin-top: 20px;">
     {% if todays_checkin_log and todays_checkin_log|length > 0 %}
         <ul class="list-group">
@@ -57,11 +62,6 @@
         </ul>
     {% else %}
         <p>今日尚无签到记录。</p>
-        {% if config.scheduler_enabled %}
-            <p>自动签到任务已启用。各任务将在 {{ "%02d:%02d"|format(config.scheduler_range_start_hour, config.scheduler_range_start_minute) }} - {{ "%02d:%02d"|format(config.scheduler_range_end_hour, config.scheduler_range_end_minute) }} (北京时间) 范围内随机执行。</p>
-        {% else %}
-            <p>自动签到任务当前已禁用。您可以前往“API设置”页面启用并配置。</p>
-        {% endif %}
     {% endif %}
 </div>
 

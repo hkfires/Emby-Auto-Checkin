@@ -28,6 +28,8 @@ login_manager.login_message = ""
 
 temp_otp_store = {}
 
+update_scheduler()
+
 class User(UserMixin):
     def __init__(self, id, username, password_hash=None):
         self.id = id
@@ -59,11 +61,29 @@ class User(UserMixin):
 def load_user(user_id):
     return User.get(user_id)
 
+@app.before_request
+def require_api_setup():
+    exempt_endpoints = ['login', 'logout', 'static', 'check_first_run_status', 'api_settings_page']
+    
+    if current_user.is_authenticated and request.endpoint not in exempt_endpoints:
+        config = load_config()
+        if not config.get('api_id') or not config.get('api_hash'):
+            if request.endpoint != 'api_settings_page':
+                flash('请首先完成 Telegram API 设置以使用其他功能。', 'warning')
+                return redirect(url_for('api_settings_page'))
+
+@app.route('/check_first_run_status', methods=['GET'])
+def check_first_run_status():
+    config = load_config()
+    web_users = config.get('web_users', [])
+    return jsonify({'is_first_run': not web_users})
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
         
         config = load_config()
         web_users = config.get('web_users', [])
@@ -71,6 +91,13 @@ def login():
         user_data = next((u for u in web_users if u.get('username') == username), None)
 
         if not web_users:
+            if not password or len(password) < 6:
+                flash('密码长度至少为6位。', 'danger')
+                return render_template('login.html')
+            if password != confirm_password:
+                flash('两次输入的密码不一致。', 'danger')
+                return render_template('login.html')
+
             new_user_id = 1
             hashed_password = generate_password_hash(password)
             new_user_data = {'id': new_user_id, 'username': username, 'password_hash': hashed_password}
@@ -140,26 +167,52 @@ def change_password():
 @login_required
 def index():
     config = load_config()
-    if not config.get('api_id') or not config.get('api_hash'):
-        return redirect(url_for('setup_page'))
-
     todays_checkin_log = load_daily_checkin_log()
-
     return render_template('index.html', config=config, todays_checkin_log=todays_checkin_log)
 
 app.jinja_env.filters['format_datetime'] = format_datetime_filter
 
-@app.route('/setup', methods=['GET', 'POST'])
+@app.route('/settings/api', methods=['GET', 'POST'])
 @login_required
-def setup_page():
+def api_settings_page():
     config = load_config()
+    if request.method == 'POST':
+        submitted_api_id = request.form.get('api_id')
+        submitted_api_hash = request.form.get('api_hash')
+        current_api_id_display_val, current_api_hash_display_val = get_masked_api_credentials(config)
 
+        if submitted_api_id == current_api_id_display_val and submitted_api_id is not None:
+            pass
+        elif submitted_api_id == "":
+            config['api_id'] = None
+        else:
+            config['api_id'] = submitted_api_id
+
+        if submitted_api_hash == current_api_hash_display_val and submitted_api_hash is not None:
+            pass
+        elif submitted_api_hash == "":
+            config['api_hash'] = None
+        else:
+            config['api_hash'] = submitted_api_hash
+        
+        save_config(config)
+        flash("API 设置已成功保存。", "success")
+        config = load_config()
+
+    api_id_display_val, api_hash_display_val = get_masked_api_credentials(config)
+    return render_template('api_settings.html',
+                           api_id_display=api_id_display_val,
+                           api_hash_display=api_hash_display_val,
+                           original_api_id=config.get('api_id'),
+                           original_api_hash=config.get('api_hash'))
+
+@app.route('/settings/scheduler', methods=['GET', 'POST'])
+@login_required
+def scheduler_settings_page():
+    config = load_config()
     if request.method == 'POST':
         form_data = request.form.to_dict()
-
         render_context = {
-            'original_api_id': config.get('api_id'),
-            'original_api_hash': config.get('api_hash'),
             'scheduler_enabled': config.get('scheduler_enabled'),
             'scheduler_range_start_hour': config.get('scheduler_range_start_hour'),
             'scheduler_range_start_minute': config.get('scheduler_range_start_minute'),
@@ -183,19 +236,13 @@ def setup_page():
             if not (0 <= s_start_h <= 23 and 0 <= s_start_m <= 59 and \
                     0 <= s_end_h <= 23 and 0 <= s_end_m <= 59):
                 flash("时间值超出有效范围 (小时 0-23, 分钟 0-59)。请重新输入。", "danger")
-                current_api_id_disp, current_api_hash_disp = get_masked_api_credentials(config)
-                render_context['api_id_display'] = current_api_id_disp
-                render_context['api_hash_display'] = current_api_hash_disp
-                return render_template('setup.html', **render_context)
+                return render_template('scheduler_settings.html', **render_context)
 
             start_total_minutes = s_start_h * 60 + s_start_m
             end_total_minutes = s_end_h * 60 + s_end_m
             if start_total_minutes >= end_total_minutes:
                 flash("调度结束时间必须晚于开始时间。请重新输入。", "danger")
-                current_api_id_disp, current_api_hash_disp = get_masked_api_credentials(config)
-                render_context['api_id_display'] = current_api_id_disp
-                render_context['api_hash_display'] = current_api_hash_disp
-                return render_template('setup.html', **render_context)
+                return render_template('scheduler_settings.html', **render_context)
 
             validated_scheduler_settings = {
                 'scheduler_enabled': True if form_data.get('scheduler_enabled') == 'on' else False,
@@ -204,46 +251,16 @@ def setup_page():
                 'scheduler_range_end_hour': s_end_h,
                 'scheduler_range_end_minute': s_end_m,
             }
+            config.update(validated_scheduler_settings)
+            save_config(config)
+            update_scheduler()
+            flash("自动签到设置已成功保存。", "success")
+            config = load_config()
         except (ValueError, TypeError):
             flash("调度时间范围格式无效。请输入有效的数字。", "danger")
-            current_api_id_disp, current_api_hash_disp = get_masked_api_credentials(config)
-            render_context['api_id_display'] = current_api_id_disp
-            render_context['api_hash_display'] = current_api_hash_disp
-            return render_template('setup.html', **render_context)
+            return render_template('scheduler_settings.html', **render_context)
 
-        submitted_api_id = form_data.get('api_id')
-        submitted_api_hash = form_data.get('api_hash')
-        current_api_id_display_val, current_api_hash_display_val = get_masked_api_credentials(config)
-
-        if submitted_api_id == current_api_id_display_val and submitted_api_id is not None:
-            pass
-        elif submitted_api_id == "":
-            config['api_id'] = None
-        else:
-            config['api_id'] = submitted_api_id
-
-        if submitted_api_hash == current_api_hash_display_val and submitted_api_hash is not None:
-            pass
-        elif submitted_api_hash == "":
-            config['api_hash'] = None
-        else:
-            config['api_hash'] = submitted_api_hash
-
-        config.update(validated_scheduler_settings)
-
-        save_config(config)
-        update_scheduler()
-        flash("设置已成功保存。", "success")
-
-        config = load_config()
-
-    api_id_display_val, api_hash_display_val = get_masked_api_credentials(config)
-
-    return render_template('setup.html',
-                           api_id_display=api_id_display_val,
-                           api_hash_display=api_hash_display_val,
-                           original_api_id=config.get('api_id'),
-                           original_api_hash=config.get('api_hash'),
+    return render_template('scheduler_settings.html',
                            scheduler_enabled=config.get('scheduler_enabled'),
                            scheduler_range_start_hour=config.get('scheduler_range_start_hour'),
                            scheduler_range_start_minute=config.get('scheduler_range_start_minute'),
@@ -254,8 +271,6 @@ def setup_page():
 @login_required
 def users_page():
     config = load_config()
-    if not config.get('api_id') or not config.get('api_hash'):
-        return redirect(url_for('setup_page'))
     return render_template('users.html', users=config.get('users', []))
 
 @app.route('/api/users/add', methods=['POST'])
@@ -320,7 +335,6 @@ async def api_add_user():
     finally:
         if client and client.is_connected():
             await client.disconnect()
-
 
 @app.route('/api/users/submit_otp', methods=['POST'])
 async def api_submit_otp():
@@ -498,8 +512,6 @@ def api_delete_user():
 @login_required
 def bots_page():
     config = load_config()
-    if not config.get('api_id') or not config.get('api_hash'):
-        return redirect(url_for('setup_page'))
     return render_template('bots.html', bots=config.get('bots', []), users=config.get('users', []))
 
 @app.route('/api/bots/add', methods=['POST'])
@@ -539,8 +551,6 @@ def api_delete_bot():
 @login_required
 def tasks_page():
     config = load_config()
-    if not config.get('api_id') or not config.get('api_hash'):
-        return redirect(url_for('setup_page'))
     logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
     valid_tasks = []
     if 'checkin_tasks' in config:
@@ -777,8 +787,6 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
 @app.route('/api/checkin/all', methods=['POST'])
 async def api_checkin_all_tasks():
     return await api_checkin_all_tasks_internal(source="http_manual_all")
-
-update_scheduler()
 
 if __name__ == '__main__':
     logger.info("启动Flask应用...")
