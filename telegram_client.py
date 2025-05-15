@@ -39,7 +39,7 @@ async def telethon_check_in(api_id, api_hash, nickname_for_logging, session_name
         await client.send_message(bot_entity, '/start')
         logger.info(f"用户 {nickname_for_logging}: 已发送/start命令给 {bot_username}")
 
-        timeout_seconds = 30
+        timeout_seconds = 10
         check_in_clicked = asyncio.Event()
         response_message = ""
 
