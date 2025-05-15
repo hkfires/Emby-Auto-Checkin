@@ -32,11 +32,17 @@ def init_db():
         if conn:
             conn.close()
 
-def load_daily_checkin_log():
-    today_str_start = date.today().isoformat() + "T00:00:00"
-    today_str_end = date.today().isoformat() + "T23:59:59.999999"
+def load_checkin_log_by_date(target_date_str):
+    try:
+        datetime.strptime(target_date_str, '%Y-%m-%d')
+    except ValueError:
+        logger.error(f"无效的日期格式: {target_date_str}. 需要 YYYY-MM-DD 格式。")
+        return []
+
+    date_start_str = target_date_str + "T00:00:00"
+    date_end_str = target_date_str + "T23:59:59.999999"
     
-    daily_logs = []
+    logs_for_date = []
     try:
         conn = sqlite3.connect(DB_FILE)
         conn.row_factory = sqlite3.Row
@@ -46,20 +52,20 @@ def load_daily_checkin_log():
             FROM checkin_records 
             WHERE timestamp >= ? AND timestamp <= ?
             ORDER BY timestamp DESC
-        ''', (today_str_start, today_str_end))
+        ''', (date_start_str, date_end_str))
         
         rows = cursor.fetchall()
         for row in rows:
-            daily_logs.append(dict(row))
+            logs_for_date.append(dict(row))
             
     except sqlite3.Error as e:
-        logger.error(f"从 {DB_FILE} 加载每日签到日志时出错: {e}")
+        logger.error(f"从 {DB_FILE} 加载日期 {target_date_str} 的签到日志时出错: {e}")
         return [] 
     finally:
         if conn:
             conn.close()
     
-    return daily_logs
+    return logs_for_date
 
 def save_daily_checkin_log(log_entry):
     try:

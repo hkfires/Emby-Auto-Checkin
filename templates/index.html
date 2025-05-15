@@ -30,19 +30,27 @@
 </div>
 
 <hr class="my-4">
-<h2>今日签到日志</h2>
-{% if config.scheduler_enabled %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">{{ display_date_label }}签到日志</h2>
+    <div class="form-inline">
+        <label for="log-date-picker" class="mr-2">选择日期:</label>
+        <input type="date" class="form-control form-control-sm" id="log-date-picker" value="{{ selected_date }}" style="width: auto;">
+    </div>
+</div>
+
+{% if config.scheduler_enabled and display_date_label == '今日' %}
     <p>自动签到任务已启用。各任务将在 {{ "%02d:%02d"|format(config.scheduler_range_start_hour, config.scheduler_range_start_minute) }} - {{ "%02d:%02d"|format(config.scheduler_range_end_hour, config.scheduler_range_end_minute) }} (北京时间) 范围内随机执行。</p>
-{% else %}
+{% elif display_date_label == '今日' %}
     <p>自动签到任务当前已禁用。您可以前往“自动签到设置”页面启用并配置。</p>
 {% endif %}
-<div id="todays-log-area" style="margin-top: 20px;">
-    {% if todays_checkin_log and todays_checkin_log|length > 0 %}
+
+<div id="checkin-log-area" style="margin-top: 20px;">
+    {% if checkin_log and checkin_log|length > 0 %}
         <ul class="list-group">
-            {% for log_entry in todays_checkin_log | sort(attribute='timestamp', reverse=True) %}
+            {% for log_entry in checkin_log %} {# app.py 中已排序，这里不需要再 sort #}
                 <li class="list-group-item">
                     <strong>时间:</strong> {{ log_entry.timestamp | format_datetime }} <br>
-                    <strong>类型:</strong> 
+                    <strong>类型:</strong>
                     {% if log_entry.checkin_type == 'scheduler' or log_entry.checkin_type == 'scheduler_single_task' %}
                         自动任务
                     {% elif log_entry.checkin_type == 'manual' %}
@@ -61,7 +69,7 @@
             {% endfor %}
         </ul>
     {% else %}
-        <p>今日尚无签到记录。</p>
+        <p>{{ display_date_label }}尚无签到记录。</p>
     {% endif %}
 </div>
 
@@ -81,16 +89,30 @@ function formatLocalDateTime(isoString) {
 }
 
 $(document).ready(function() {
-    $('#todays-log-area .list-group-item').each(function() {
-        const strongElement = $(this).find('strong:contains("时间:")');
-        if (strongElement.length) {
-            const originalTimestamp = strongElement[0].nextSibling.nodeValue.trim();
-            if (originalTimestamp) {
-                strongElement[0].nextSibling.nodeValue = ' ' + formatLocalDateTime(originalTimestamp) + ' ';
+    $('#log-date-picker').on('change', function() {
+        const selectedDate = $(this).val();
+        if (selectedDate) {
+            const today = new Date().toISOString().split('T')[0];
+            if (selectedDate === today) {
+                window.location.href = '/';
+            } else {
+                window.location.href = '/?date=' + selectedDate;
             }
         }
     });
 
+    $('#checkin-log-area .list-group-item').each(function() {
+        const strongElement = $(this).find('strong:contains("时间:")');
+        if (strongElement.length) {
+            let timestampTextElement = strongElement[0].nextSibling;
+            while(timestampTextElement && timestampTextElement.nodeType !== Node.TEXT_NODE) {
+                timestampTextElement = timestampTextElement.nextSibling;
+            }
+            if (timestampTextElement) {
+                const originalTimestamp = timestampTextElement.nodeValue.trim();
+            }
+        }
+    });
 
     $('#checkinAllBtn').on('click', function() {
         $(this).prop('disabled', true).text('正在执行...');

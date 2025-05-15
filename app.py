@@ -5,10 +5,11 @@ import re
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from telethon import TelegramClient, errors
+from datetime import date, datetime
 
 from config import load_config, save_config
 from telegram_client import telethon_check_in, get_session_name
-from log import load_daily_checkin_log, save_daily_checkin_log, init_db as init_log_db
+from log import save_daily_checkin_log, init_db as init_log_db, load_checkin_log_by_date
 from scheduler import update_scheduler, scheduler, run_scheduled_task_sync, get_random_time_in_range
 from utils import format_datetime_filter, get_masked_api_credentials
 
@@ -23,6 +24,7 @@ app.secret_key = os.urandom(24)
 
 with app.app_context():
     init_log_db()
+    update_scheduler()
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -30,8 +32,6 @@ login_manager.login_view = 'login'
 login_manager.login_message = ""
 
 temp_otp_store = {}
-
-update_scheduler()
 
 class User(UserMixin):
     def __init__(self, id, username, password_hash=None):
@@ -170,8 +170,30 @@ def change_password():
 @login_required
 def index():
     config = load_config()
-    todays_checkin_log = load_daily_checkin_log()
-    return render_template('index.html', config=config, todays_checkin_log=todays_checkin_log)
+    selected_date_str = request.args.get('date')
+    checkin_log_for_display = []
+    display_date_label = "今日"
+
+    if selected_date_str:
+        try:
+            datetime.strptime(selected_date_str, '%Y-%m-%d')
+            checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
+            display_date_label = selected_date_str
+        except ValueError:
+            flash(f"提供的日期格式无效: {selected_date_str}。请使用 YYYY-MM-DD 格式。", "warning")
+            selected_date_str = date.today().isoformat()
+            checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
+            display_date_label = "今日"
+    else:
+        selected_date_str = date.today().isoformat()
+        checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
+        display_date_label = "今日"
+        
+    return render_template('index.html', 
+                           config=config, 
+                           checkin_log=checkin_log_for_display, 
+                           selected_date=selected_date_str,
+                           display_date_label=display_date_label)
 
 app.jinja_env.filters['format_datetime'] = format_datetime_filter
 
@@ -765,7 +787,7 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
         elif user_config: 
              current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录。"}
 
-        results_list.append({"task": {"user_identifier": log_nickname, "bot_username": bot_username}, "result": current_task_result})
+        results_list.append({"task": {"user_nickname": log_nickname, "bot_username": bot_username}, "result": current_task_result})
 
         log_entry = {
             "checkin_type": source,
