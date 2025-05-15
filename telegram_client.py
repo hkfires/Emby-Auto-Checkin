@@ -11,7 +11,7 @@ def get_session_name(nickname):
     return f"session_{sanitized_nickname}"
 
 async def telethon_check_in(api_id, api_hash, nickname_for_logging, session_name, bot_username):
-    logger.info(f"Attempting check-in for {nickname_for_logging} with {bot_username} using session {session_name}")
+    logger.info(f"尝试为用户 {nickname_for_logging} 使用会话 {session_name} 向机器人 {bot_username} 进行签到")
     client = TelegramClient(session_name, api_id, api_hash)
     result = {"success": False, "message": "签到过程未启动或未完成。"}
 

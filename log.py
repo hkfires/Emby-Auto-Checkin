@@ -25,9 +25,9 @@ def init_db():
             )
         ''')
         conn.commit()
-        logger.info(f"Database {DB_FILE} initialized successfully.")
+        logger.info(f"数据库 {DB_FILE} 初始化成功。")
     except sqlite3.Error as e:
-        logger.error(f"Error initializing database {DB_FILE}: {e}")
+        logger.error(f"初始化数据库 {DB_FILE} 时出错: {e}")
     finally:
         if conn:
             conn.close()
@@ -53,7 +53,7 @@ def load_daily_checkin_log():
             daily_logs.append(dict(row))
             
     except sqlite3.Error as e:
-        logger.error(f"Error loading daily checkin log from {DB_FILE}: {e}")
+        logger.error(f"从 {DB_FILE} 加载每日签到日志时出错: {e}")
         return [] 
     finally:
         if conn:
@@ -82,9 +82,9 @@ def save_daily_checkin_log(log_entry):
             log_entry.get("message")
         ))
         conn.commit()
-        logger.info(f"Saved checkin log to {DB_FILE}: User {log_entry.get('user_nickname')}, Bot {log_entry.get('bot_username')}")
+        logger.info(f"签到日志已保存到 {DB_FILE}: 用户 {log_entry.get('user_nickname')}, 机器人 {log_entry.get('bot_username')}")
     except sqlite3.Error as e:
-        logger.error(f"Error saving daily checkin log to {DB_FILE}: {e}")
+        logger.error(f"保存每日签到日志到 {DB_FILE} 时出错: {e}")
     finally:
         if conn:
             conn.close()
