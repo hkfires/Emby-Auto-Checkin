@@ -43,14 +43,14 @@
                 <li class="list-group-item">
                     <strong>时间:</strong> {{ log_entry.timestamp | format_datetime }} <br>
                     <strong>类型:</strong> 
-                    {% if log_entry.type == 'scheduler' or log_entry.type == 'scheduler_single_task' %}
+                    {% if log_entry.checkin_type == 'scheduler' or log_entry.checkin_type == 'scheduler_single_task' %}
                         自动任务
-                    {% elif log_entry.type == 'manual' %}
+                    {% elif log_entry.checkin_type == 'manual' %}
                         手动执行 (单任务)
-                    {% elif log_entry.type == 'http_manual_all' %}
+                    {% elif log_entry.checkin_type == 'http_manual_all' %}
                         手动执行 (所有任务)
                     {% else %}
-                        {{ log_entry.type }}
+                        {{ log_entry.checkin_type }}
                     {% endif %}
                     <br>
                     <strong>用户:</strong> {{ log_entry.user_nickname }} <br>

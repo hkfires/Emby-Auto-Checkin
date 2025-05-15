@@ -8,7 +8,7 @@ from telethon import TelegramClient, errors
 
 from config import load_config, save_config
 from telegram_client import telethon_check_in, get_session_name
-from log import load_daily_checkin_log, save_daily_checkin_log
+from log import load_daily_checkin_log, save_daily_checkin_log, init_db as init_log_db
 from scheduler import update_scheduler, scheduler, run_scheduled_task_sync, get_random_time_in_range
 from utils import format_datetime_filter, get_masked_api_credentials
 
@@ -20,6 +20,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+
+with app.app_context():
+    init_log_db()
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -687,7 +690,7 @@ async def api_manual_checkin():
     result = await telethon_check_in(api_id, api_hash, user_nickname_for_operation, session_name, bot_username)
 
     log_entry = {
-        "type": "manual",
+        "checkin_type": "manual",
         "user_nickname": user_nickname_for_operation, 
         "bot_username": bot_username,
         "success": result.get("success"),
@@ -765,7 +768,7 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
         results_list.append({"task": {"user_identifier": log_nickname, "bot_username": bot_username}, "result": current_task_result})
 
         log_entry = {
-            "type": source,
+            "checkin_type": source,
             "user_nickname": log_nickname, 
             "bot_username": bot_username,
             "success": current_task_result.get("success"),
