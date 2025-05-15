@@ -2,9 +2,10 @@
 
 ## 目前适配Emby
 
-*   HKA Emby-自建公益服
+*   HKA Emby
 *   Beebi（比比）
 *   YounoEmby
+*   69云机场
 
 ## 使用 Docker 部署
 
