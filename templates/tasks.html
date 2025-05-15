@@ -48,10 +48,10 @@
     <tbody>
         {% for task in tasks %}
         <tr>
-            <td>{{ task.display_nickname }}</td>
-            <td>{{ task.bot_username }}</td>
-            <td><span class="badge bg-info">{{ task.bot_strategy_display_name | default(task.bot_strategy) }}</span></td> {# Use display name #}
-            <td>
+            <td class="align-middle">{{ task.display_nickname }}</td>
+            <td class="align-middle">@{{ task.bot_username }}</td>
+            <td class="align-middle"><span class="badge bg-primary text-white py-2 px-2">{{ task.bot_strategy_display_name | default(task.bot_strategy) }}</span></td> {# Use display name #}
+            <td class="align-middle">
                 <button class="btn btn-danger btn-sm delete-task-btn" data-tgid="{{ task.user_telegram_id }}" data-bot="{{ task.bot_username }}">删除</button>
             </td>
         </tr>
