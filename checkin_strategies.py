@@ -130,20 +130,22 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
 class CheckinCommandTextStrategy(CheckinStrategy):
     async def check_in(self):
         self.logger.info(f"用户 {self.nickname_for_logging}: 使用 CheckinCommandTextStrategy 开始签到。")
-        await self.send_command('/checkin')
         
         response_message_text = ""
-        final_result = {"success": False, "message": "未收到机器人响应或响应超时。"}
+        final_result = {"success": False, "message": "与机器人对话失败或响应超时。"}
 
         try:
             async with self.client.conversation(self.bot_entity, timeout=self.timeout_seconds) as conv:
+                await conv.send_message('/checkin')
+                self.logger.info(f"用户 {self.nickname_for_logging}: (对话内)已发送命令 '/checkin' 给 {self.bot_entity.username}")
+                
                 response = await conv.get_response()
                 response_message_text = response.text
                 self.logger.info(f"用户 {self.nickname_for_logging}: 收到来自 {self.bot_entity.username} 的响应: {response_message_text[:100]}...")
                 final_result = await self._parse_response_text(response_message_text)
         except asyncio.TimeoutError:
-            self.logger.warning(f"用户 {self.nickname_for_logging}: 等待机器人响应超时。最后收到的消息(如有): '{response_message_text}'")
-            final_result = {"success": False, "message": f"等待机器人响应超时。机器人最后消息: '{response_message_text}'"}
+            self.logger.warning(f"用户 {self.nickname_for_logging}: 等待机器人响应超时。")
+            final_result = {"success": False, "message": "等待机器人响应超时。"}
         except Exception as e:
             self.logger.error(f"用户 {self.nickname_for_logging}: 处理响应时发生错误: {e}")
             final_result = {"success": False, "message": f"处理响应时发生错误: {e}"}
