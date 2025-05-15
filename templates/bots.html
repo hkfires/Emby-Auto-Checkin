@@ -7,12 +7,21 @@
 <p>添加需要进行签到的Telegram机器人用户名 (例如 YounoEmby_bot)。</p>
 
 <form id="addBotForm" class="mb-4">
-    <div class="form-row">
-        <div class="col-md-8">
-            <input type="text" class="form-control" id="bot_username" name="bot_username" placeholder="输入机器人用户名 (不带@)" required>
+    <div class="form-row align-items-end">
+        <div class="col-md-5">
+            <label for="bot_username_input">机器人用户名</label>
+            <input type="text" class="form-control" id="bot_username_input" name="bot_username" placeholder="输入机器人用户名 (不带@)" required>
         </div>
         <div class="col-md-4">
-            <button type="submit" class="btn btn-success btn-block">添加机器人</button>
+            <label for="bot_strategy_select">签到策略</label>
+            <select class="form-control" id="bot_strategy_select" name="strategy">
+                {% for strat_info in available_strategies %}
+                    <option value="{{ strat_info.key }}" {% if strat_info.key == 'start_button_alert' %}selected{% endif %}>{{ strat_info.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <button type="submit" class="btn btn-success btn-block mt-md-0 mt-2">添加/更新机器人</button>
         </div>
     </div>
 </form>
@@ -23,21 +32,23 @@
     <thead>
         <tr>
             <th>机器人用户名</th>
+            <th>签到策略</th>
             <th>手动签到</th>
             <th>操作</th>
         </tr>
     </thead>
     <tbody>
-        {% for bot_username in bots %}
+        {% for bot_item in bots %}
         <tr>
-            <td>@{{ bot_username }}</td>
+            <td>@{{ bot_item.username }}</td>
+            <td><span class="badge bg-primary">{{ bot_item.strategy_display_name | default(bot_item.strategy) }}</span></td>
             <td>
-                <button class="btn btn-info btn-sm manual-checkin-btn" data-bot="{{ bot_username }}" {% if not users or users | selectattr('status', 'equalto', 'logged_in') | list | length == 0 %}disabled title="没有已登录的用户可用于签到"{% endif %}>
+                <button class="btn btn-info btn-sm manual-checkin-btn" data-bot="{{ bot_item.username }}" data-strategy="{{ bot_item.strategy }}" {% if not users or users | selectattr('status', 'equalto', 'logged_in') | list | length == 0 %}disabled title="没有已登录的用户可用于签到"{% endif %}>
                     手动签到
                 </button>
             </td>
             <td>
-                <button class="btn btn-danger btn-sm delete-bot-btn" data-bot="{{ bot_username }}">删除</button>
+                <button class="btn btn-danger btn-sm delete-bot-btn" data-bot="{{ bot_item.username }}">删除</button>
             </td>
         </tr>
         {% endfor %}
@@ -82,11 +93,12 @@
 $(document).ready(function() {
     $('#addBotForm').on('submit', function(e) {
         e.preventDefault();
-        const bot_username = $('#bot_username').val();
+        const bot_username = $('#bot_username_input').val();
+        const strategy = $('#bot_strategy_select').val();
         $.ajax({
             url: "{{ url_for('api_add_bot') }}",
             type: 'POST',
-            data: { bot_username: bot_username },
+            data: { bot_username: bot_username, strategy: strategy },
             dataType: 'json',
             success: function(response) {
                 showAlert(response.message, response.success ? 'success' : 'danger');
@@ -95,14 +107,11 @@ $(document).ready(function() {
                 }
             },
             error: function(xhr) {
-                let errorMsg = '添加机器人失败。';
+                let errorMsg = '添加或更新机器人失败。';
                 if (xhr.responseJSON && xhr.responseJSON.message) {
                     errorMsg = xhr.responseJSON.message;
                 }
                 showAlert(errorMsg, 'danger');
-            },
-            complete: function() {
-                $('#bot_username').val('');
             }
         });
     });
@@ -130,8 +139,10 @@ $(document).ready(function() {
 
     $('.manual-checkin-btn').on('click', function() {
         const botUsername = $(this).data('bot');
+        const botStrategy = $(this).data('strategy');
         $('#checkinBotName').text('@' + botUsername);
         $('#manualCheckinBotHidden').val(botUsername);
+        $('#manualCheckinModal').data('strategy', botStrategy);
         $('#manual-checkin-result-area').html('');
         $('#manualCheckinModal').modal('show');
     });
@@ -139,6 +150,7 @@ $(document).ready(function() {
     $('#submitManualCheckinBtn').on('click', function() {
         const userTelegramId = $('#manualCheckinUserSelect').val();
         const botUsername = $('#manualCheckinBotHidden').val();
+        const strategy = $('#manualCheckinModal').data('strategy');
         const btn = $(this);
 
         if (!userTelegramId) {
@@ -152,7 +164,11 @@ $(document).ready(function() {
         $.ajax({
             url: "{{ url_for('api_manual_checkin') }}",
             type: 'POST',
-            data: { user_telegram_id: userTelegramId, bot_username: botUsername },
+            data: { 
+                user_telegram_id: userTelegramId, 
+                bot_username: botUsername,
+                strategy: strategy
+            },
             dataType: 'json',
             success: function(response) {
                 const resultType = response.success ? 'success' : 'danger';

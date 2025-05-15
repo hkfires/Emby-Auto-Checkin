@@ -537,37 +537,102 @@ def api_delete_user():
 @login_required
 def bots_page():
     config = load_config()
-    return render_template('bots.html', bots=config.get('bots', []), users=config.get('users', []))
+    from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
+    
+    available_strategies_for_template = []
+    for key in STRATEGY_MAPPING.keys():
+        available_strategies_for_template.append({
+            "key": key,
+            "name": STRATEGY_DISPLAY_NAMES.get(key, key) 
+        })
+    
+    bots_list = config.get('bots', [])
+    processed_bots = []
+    config_changed = False
+
+    for bot_entry in bots_list:
+        bot_dict = None
+        if isinstance(bot_entry, str):
+            bot_dict = {"username": bot_entry, "strategy": "start_button_alert"}
+            config_changed = True
+        elif isinstance(bot_entry, dict) and "username" in bot_entry:
+            bot_dict = bot_entry
+            current_strategy = bot_dict.get('strategy')
+            if not current_strategy or current_strategy not in STRATEGY_MAPPING:
+                bot_dict["strategy"] = "start_button_alert"
+                config_changed = True
+        
+        if bot_dict:
+            bot_dict["strategy_display_name"] = STRATEGY_DISPLAY_NAMES.get(bot_dict["strategy"], bot_dict["strategy"])
+            processed_bots.append(bot_dict)
+            
+    if config_changed:
+        config['bots'] = processed_bots
+        save_config(config)
+
+    return render_template('bots.html', bots=processed_bots, users=config.get('users', []), available_strategies=available_strategies_for_template)
 
 @app.route('/api/bots/add', methods=['POST'])
 def api_add_bot():
     config = load_config()
     bot_username = request.form.get('bot_username')
+    strategy = request.form.get('strategy', 'start_button_alert')
+
     if not bot_username:
         return jsonify({"success": False, "message": "未提供机器人用户名。"}), 400
 
-    if bot_username not in config['bots']:
-        config['bots'].append(bot_username)
+    from checkin_strategies import STRATEGY_MAPPING
+    if strategy not in STRATEGY_MAPPING:
+        return jsonify({"success": False, "message": f"无效的签到策略: {strategy}。"}), 400
+
+    if 'bots' not in config or not isinstance(config['bots'], list):
+        config['bots'] = []
+    
+    migrated_bots = []
+    made_changes_in_migration = False
+    for item in config['bots']:
+        if isinstance(item, str):
+            migrated_bots.append({'username': item, 'strategy': 'start_button_alert'})
+            made_changes_in_migration = True
+        elif isinstance(item, dict) and 'username' in item:
+             if 'strategy' not in item:
+                item['strategy'] = 'start_button_alert'
+                made_changes_in_migration = True
+             migrated_bots.append(item)
+    config['bots'] = migrated_bots
+
+    if not any(b.get('username') == bot_username for b in config['bots']):
+        new_bot_entry = {"username": bot_username, "strategy": strategy}
+        config['bots'].append(new_bot_entry)
         save_config(config)
-        logger.info(f"机器人 {bot_username} 已添加。")
+        logger.info(f"机器人 {bot_username} (策略: {strategy}) 已添加。")
         return jsonify({"success": True, "message": "机器人已添加。"})
     else:
-        return jsonify({"success": False, "message": "该机器人已存在。"}), 400
+        existing_bot = next((b for b in config['bots'] if b.get('username') == bot_username), None)
+        if existing_bot and existing_bot.get('strategy') != strategy:
+             existing_bot['strategy'] = strategy
+             save_config(config)
+             logger.info(f"机器人 {bot_username} 的策略已更新为: {strategy}。")
+             return jsonify({"success": True, "message": f"机器人 {bot_username} 的策略已更新。"})
+        
+        return jsonify({"success": False, "message": "该机器人已存在且策略相同。"}), 400
 
 @app.route('/api/bots/delete', methods=['POST'])
 def api_delete_bot():
     config = load_config()
-    bot_to_delete = request.form.get('bot_username')
-    if not bot_to_delete:
+    bot_to_delete_username = request.form.get('bot_username')
+    if not bot_to_delete_username:
         return jsonify({"success": False, "message": "未提供机器人用户名。"}), 400
 
-    if bot_to_delete in config['bots']:
-        config['bots'].remove(bot_to_delete)
+    original_bot_count = len(config.get('bots', []))
+    config['bots'] = [b for b in config.get('bots', []) if isinstance(b, dict) and b.get('username') != bot_to_delete_username or isinstance(b, str) and b != bot_to_delete_username]
+    
+    if len(config.get('bots',[])) < original_bot_count:
         if 'checkin_tasks' in config:
-            config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t.get('bot_username') != bot_to_delete]
+            config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t.get('bot_username') != bot_to_delete_username]
         save_config(config)
         update_scheduler()
-        logger.info(f"机器人 {bot_to_delete} 已删除，并更新了调度器。")
+        logger.info(f"机器人 {bot_to_delete_username} 已删除，并更新了调度器。")
         return jsonify({"success": True, "message": "机器人已删除。"})
     else:
         return jsonify({"success": False, "message": "未找到该机器人。"}), 404
@@ -576,31 +641,64 @@ def api_delete_bot():
 @login_required
 def tasks_page():
     config = load_config()
+    from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
+
+    bots_data = []
+    _config_changed_bots = False
+    temp_bots_list = config.get('bots', [])
+    for bot_entry_config in temp_bots_list:
+        bot_dict = None
+        if isinstance(bot_entry_config, str):
+            bot_dict = {"username": bot_entry_config, "strategy": "start_button_alert"}
+            _config_changed_bots = True
+        elif isinstance(bot_entry_config, dict) and "username" in bot_entry_config:
+            bot_dict = bot_entry_config
+            current_strategy = bot_dict.get('strategy')
+            if not current_strategy or current_strategy not in STRATEGY_MAPPING:
+                bot_dict["strategy"] = "start_button_alert"
+                _config_changed_bots = True
+        
+        if bot_dict:
+            bot_dict["strategy_display_name"] = STRATEGY_DISPLAY_NAMES.get(bot_dict["strategy"], bot_dict["strategy"])
+            bots_data.append(bot_dict)
+
+    if _config_changed_bots:
+        config['bots'] = bots_data
+        save_config(config)
+
     logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
     valid_tasks = []
+    
+    bot_strategy_map = {b.get('username'): b.get('strategy', 'start_button_alert') for b in bots_data}
+    bot_strategy_display_map = {b.get('username'): b.get('strategy_display_name', b.get('strategy', 'start_button_alert')) for b in bots_data}
+
+
+    logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
+    valid_tasks = []
+    
+    bot_strategy_map = {b.get('username'): b.get('strategy', 'start_button_alert') for b in bots_data}
+
     if 'checkin_tasks' in config:
         all_users_list = config.get('users', [])
         user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
 
         for task_data in config.get('checkin_tasks', []):
+            if 'strategy' in task_data:
+                del task_data['strategy'] 
+
             if 'user_telegram_id' in task_data and 'bot_username' in task_data:
                 user_for_task = user_map_by_id.get(task_data['user_telegram_id'])
                 if user_for_task:
                     task_data['display_nickname'] = user_for_task.get('nickname', f"TGID: {task_data['user_telegram_id']}")
                 else:
                     task_data['display_nickname'] = f"未知用户 (TGID: {task_data['user_telegram_id']})"
-                valid_tasks.append(task_data)
-            elif 'user_nickname' in task_data and 'bot_username' in task_data:
-                legacy_user = next((u for u in all_users_list if u.get('nickname') == task_data['user_nickname']), None)
-                if legacy_user and legacy_user.get('telegram_id'):
-                    task_data['user_telegram_id'] = legacy_user['telegram_id'] 
-                    task_data['display_nickname'] = legacy_user['nickname']
-                else: 
-                    task_data['display_nickname'] = task_data['user_nickname'] + " (旧数据/TGID未知)"
-                    task_data['user_telegram_id'] = task_data.get('user_telegram_id') 
+                
+                task_data['bot_strategy'] = bot_strategy_map.get(task_data['bot_username'], 'start_button_alert') # Keep key for internal use if needed
+                task_data['bot_strategy_display_name'] = bot_strategy_display_map.get(task_data['bot_username'], task_data['bot_strategy']) # Add display name
                 valid_tasks.append(task_data)
     
-    return render_template('tasks.html', tasks=valid_tasks, users=logged_in_users, bots=config.get('bots', []))
+    return render_template('tasks.html', tasks=valid_tasks, users=logged_in_users, bots=bots_data)
+
 
 @app.route('/api/tasks/add', methods=['POST'])
 def api_add_task():
@@ -627,7 +725,7 @@ def api_add_task():
         "bot_username": bot_username,
         "last_auto_checkin_status": None,
         "last_auto_checkin_time": None,
-        "last_scheduled_date": None 
+        "last_scheduled_date": None
     }
     
     if 'checkin_tasks' not in config or not isinstance(config['checkin_tasks'], list):
@@ -707,12 +805,29 @@ async def api_manual_checkin():
         return jsonify({"success": False, "message": f"用户TG ID '{user_telegram_id}' 未找到或未登录。"}), 400
 
     session_name = user_config.get('session_name')
-    user_nickname_for_operation = user_config.get('nickname', f"TGID_{user_telegram_id}") 
+    user_nickname_for_operation = user_config.get('nickname', f"TGID_{user_telegram_id}")
+    bots_list = config.get('bots', [])
+    bot_config = next((b for b in bots_list if isinstance(b, dict) and b.get('username') == bot_username), None)
     
-    result = await telethon_check_in(api_id, api_hash, user_nickname_for_operation, session_name, bot_username)
+    strategy_identifier = "start_button_alert"
+    if bot_config:
+        strategy_identifier = bot_config.get('strategy', "start_button_alert")
+    elif next((b for b in bots_list if isinstance(b, str) and b == bot_username), None):
+        pass
+    else:
+        return jsonify({"success": False, "message": f"机器人 '{bot_username}' 未在配置中找到。"}), 400
+
+    from checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
+    if strategy_identifier not in STRATEGY_MAPPING:
+        logger.warning(f"手动签到: 机器人 {bot_username} 配置了无效策略 '{strategy_identifier}'，将使用默认策略 'start_button_alert'。")
+        strategy_identifier = "start_button_alert"
+        
+    strategy_display = get_strategy_display_name(strategy_identifier)
+
+    result = await telethon_check_in(api_id, api_hash, user_nickname_for_operation, session_name, bot_username, strategy_identifier)
 
     log_entry = {
-        "checkin_type": "manual",
+        "checkin_type": f"手动签到 ({strategy_display})",
         "user_nickname": user_nickname_for_operation, 
         "bot_username": bot_username,
         "success": result.get("success"),
@@ -747,13 +862,24 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
     results_list = []
     all_users_list = config.get('users', [])
     user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
-    user_map_by_nickname = {user['nickname']: user for user in all_users_list if 'nickname' in user}
+
+    from checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
+    bots_list_for_strat_map = config.get('bots', [])
+    bot_strategy_map_all = {}
+    for b_item in bots_list_for_strat_map:
+        if isinstance(b_item, dict) and 'username' in b_item:
+            strat = b_item.get('strategy', 'start_button_alert')
+            if strat not in STRATEGY_MAPPING:
+                logger.warning(f"api_checkin_all: 机器人 {b_item['username']} 配置了无效策略 '{strat}'，将使用默认。")
+                strat = 'start_button_alert'
+            bot_strategy_map_all[b_item['username']] = strat
+        elif isinstance(b_item, str):
+            bot_strategy_map_all[b_item] = 'start_button_alert'
 
 
     for task_config_entry in tasks_to_run:
         bot_username = task_config_entry.get('bot_username')
         user_telegram_id = task_config_entry.get('user_telegram_id')
-        legacy_user_nickname = task_config_entry.get('user_nickname') 
 
         user_config = None
         log_nickname = "未知用户"
@@ -763,34 +889,36 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
             if user_config:
                 log_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}")
             else: 
-                log_nickname = f"TGID_{user_telegram_id} (用户不存在)"
-        elif legacy_user_nickname: 
-            user_config = user_map_by_nickname.get(legacy_user_nickname)
-            if user_config:
-                log_nickname = legacy_user_nickname
-            else: 
-                log_nickname = f"{legacy_user_nickname} (用户不存在)"
+                log_nickname = f"TGID_{user_telegram_id} (用户数据不存在)"
         
-        if not bot_username or not (user_telegram_id or legacy_user_nickname) :
-            logger.warning(f"跳过格式不正确的任务 (缺少TGID/昵称或机器人名): {task_config_entry}")
+        if not bot_username or not user_telegram_id:
+            logger.warning(f"跳过格式不正确的任务 (缺少TGID或机器人名): {task_config_entry}")
             continue
 
-        current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录、配置不正确或不存在。"}
+        current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录、配置不正确或用户数据不存在。"}
         
         if user_config and user_config.get('status') == 'logged_in':
             session_name = user_config.get('session_name')
+            strategy_identifier = bot_strategy_map_all.get(bot_username, "start_button_alert")
+            strategy_display = get_strategy_display_name(strategy_identifier)
             try:
-                current_task_result = await telethon_check_in(api_id, api_hash, log_nickname, session_name, bot_username)
+                current_task_result = await telethon_check_in(api_id, api_hash, log_nickname, session_name, bot_username, strategy_identifier)
             except Exception as e_checkin:
-                logger.error(f"执行全部签到任务中，用户 {log_nickname}->{bot_username} 时发生异常: {e_checkin}")
+                logger.error(f"执行全部签到任务中，用户 {log_nickname}->{bot_username} (策略: {strategy_display}) 时发生异常: {e_checkin}")
                 current_task_result = {"success": False, "message": f"签到时发生内部错误: {str(e_checkin)}"}
         elif user_config: 
              current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录。"}
 
-        results_list.append({"task": {"user_nickname": log_nickname, "bot_username": bot_username}, "result": current_task_result})
+        results_list.append({"task": {"user_nickname": log_nickname, "bot_username": bot_username, "strategy_used": strategy_identifier}, "result": current_task_result})
+        
+        log_checkin_type_display = source
+        if source == "scheduler":
+            log_checkin_type_display = f"自动调度 ({strategy_display})"
+        elif source.startswith("http_manual_all"):
+            log_checkin_type_display = f"手动批量签到 ({strategy_display})"
 
         log_entry = {
-            "checkin_type": source,
+            "checkin_type": log_checkin_type_display,
             "user_nickname": log_nickname, 
             "bot_username": bot_username,
             "success": current_task_result.get("success"),

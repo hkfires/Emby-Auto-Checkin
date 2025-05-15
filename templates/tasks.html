@@ -23,12 +23,12 @@
             <label for="bot_username_task">选择机器人</label>
             <select class="form-control" id="bot_username_task" name="bot_username" required>
                 <option value="">-- 选择一个机器人 --</option>
-                {% for bot in bots %}
-                    <option value="{{ bot }}">@{{ bot }}</option>
+                {% for bot_item in bots %}
+                    <option value="{{ bot_item.username }}">@{{ bot_item.username }}</option>
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-2">
+        <div class="col-md-2"> 
             <button type="submit" class="btn btn-success btn-block">添加任务</button>
         </div>
     </div>
@@ -41,14 +41,16 @@
         <tr>
             <th>用户昵称</th>
             <th>机器人用户名</th>
+            <th>机器人签到策略</th>
             <th>操作</th>
         </tr>
     </thead>
     <tbody>
         {% for task in tasks %}
         <tr>
-            <td>{{ task.display_nickname }}</td> {# Changed from task.user_nickname, will be populated by backend #}
+            <td>{{ task.display_nickname }}</td>
             <td>@{{ task.bot_username }}</td>
+            <td><span class="badge bg-info">{{ task.bot_strategy_display_name | default(task.bot_strategy) }}</span></td> {# Use display name #}
             <td>
                 <button class="btn btn-danger btn-sm delete-task-btn" data-tgid="{{ task.user_telegram_id }}" data-bot="{{ task.bot_username }}">删除</button>
             </td>
@@ -70,7 +72,7 @@ $(document).ready(function() {
         const user_telegram_id = $('#user_telegram_id').val();
         const bot_username = $('#bot_username_task').val();
 
-        if (!user_telegram_id || !bot_username) {
+        if (!user_telegram_id || !bot_username ) {
             showAlert('请选择用户和机器人。', 'warning');
             return;
         }
@@ -78,7 +80,10 @@ $(document).ready(function() {
         $.ajax({
             url: "{{ url_for('api_add_task') }}",
             type: 'POST',
-            data: { user_telegram_id: user_telegram_id, bot_username: bot_username },
+            data: { 
+                user_telegram_id: user_telegram_id, 
+                bot_username: bot_username
+            },
             dataType: 'json',
             success: function(response) {
                 showAlert(response.message, response.success ? 'success' : 'danger');
