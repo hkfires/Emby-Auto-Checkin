@@ -24,7 +24,6 @@
         <tr>
             <th>用户昵称</th>
             <th>TG ID</th>
-            <th>会话名</th>
             <th>状态</th>
             <th>操作</th>
         </tr>
@@ -34,16 +33,15 @@
         <tr>
             <td style="vertical-align: middle;">{{ user.nickname | default('N/A') }}</td>
             <td style="vertical-align: middle;">{{ user.telegram_id | default('N/A') }}</td>
-            <td style="vertical-align: middle;">{{ user.session_name | default('N/A') }}</td>
             <td style="vertical-align: middle;">
                 {% if user.status == 'logged_in' %}
-                    <span class="badge badge-success">已登录</span>
+                    <span class="badge badge-success py-2 px-2">已登录</span>
                 {% elif user.status == 'requires_otp' %}
-                    <span class="badge badge-warning">等待验证码</span>
+                    <span class="badge badge-warning py-2 px-2">等待验证码</span>
                 {% elif user.status == '2fa_needed' %}
-                    <span class="badge badge-danger">需要2FA密码</span>
+                    <span class="badge badge-danger py-2 px-2">需要2FA密码</span>
                 {% else %}
-                    <span class="badge badge-danger">{{ user.status | default('未知') }}</span>
+                    <span class="badge badge-danger py-2 px-2">{{ user.status | default('未知') }}</span>
                 {% endif %}
             </td>
             <td style="vertical-align: middle;">
