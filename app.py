@@ -897,15 +897,9 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
              current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录。"}
 
         results_list.append({"task": {"user_nickname": log_nickname, "bot_username": bot_username, "strategy_used": strategy_identifier}, "result": current_task_result})
-        
-        log_checkin_type_display = source
-        if source == "scheduler":
-            log_checkin_type_display = f"自动调度 ({strategy_display})"
-        elif source.startswith("http_manual_all"):
-            log_checkin_type_display = f"手动批量签到 ({strategy_display})"
-
+    
         log_entry = {
-            "checkin_type": log_checkin_type_display,
+            "checkin_type": f"手动批量签到 ({strategy_display})",
             "user_nickname": log_nickname, 
             "bot_username": bot_username,
             "success": current_task_result.get("success"),

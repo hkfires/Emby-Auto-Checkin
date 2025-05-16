@@ -46,7 +46,7 @@ def run_scheduled_task_sync(user_telegram_id, user_nickname, bot_username, sessi
             result = await telethon_check_in(api_id, api_hash, user_nickname, session_name, bot_username)
 
         log_entry = {
-            "type": "scheduler_single_task",
+            "checkin_type": "自动签到",
             "user_nickname": user_nickname,
             "bot_username": bot_username,
             "success": result.get("success"),

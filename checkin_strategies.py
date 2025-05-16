@@ -8,7 +8,8 @@ class CheckinStrategy:
         self.bot_entity = bot_entity
         self.logger = logger
         self.nickname_for_logging = nickname_for_logging
-        self.timeout_seconds = 10 
+        self.timeout_seconds = 10
+        self.button_click_attempted_event = None
 
     async def send_command(self, command_text):
         await self.client.send_message(self.bot_entity, command_text)
@@ -109,32 +110,51 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
         await self.send_command('/start')
 
         check_in_event = asyncio.Event()
-        result_container = [{"success": False, "message": "签到过程未启动或未完成。"}] 
+        self.button_click_attempted_event = asyncio.Event()
+        result_container = [{"success": False, "message": "签到过程未启动或未完成。"}]
 
         async def bot_response_handler(event):
+            if check_in_event.is_set():
+                self.logger.debug(f"用户 {self.nickname_for_logging}: 主签到事件已完成或超时，忽略新的消息事件。")
+                return
+
             response_message_text_capture = event.raw_text[:100]
             self.logger.info(f"用户 {self.nickname_for_logging}: 收到来自 {self.bot_entity.username} 的消息: {response_message_text_capture}...")
 
             try:
-                clicked_button, click_obj = await self._find_and_click_checkin_button(event)
+                if not self.button_click_attempted_event.is_set():
+                    clicked_button, click_obj = await self._find_and_click_checkin_button(event)
 
-                if clicked_button:
-                    interim_result, needs_follow_up = await self._handle_alert_or_prepare_follow_up(click_obj)
-                    
-                    if needs_follow_up:
-                        final_result = await self._process_follow_up_message()
-                        result_container[0] = final_result
+                    if clicked_button:
+                        self.button_click_attempted_event.set()
+                        interim_result, needs_follow_up = await self._handle_alert_or_prepare_follow_up(click_obj)
+                        
+                        if needs_follow_up:
+                            final_result = await self._process_follow_up_message()
+                            result_container[0] = final_result
+                        else:
+                            result_container[0] = interim_result
+                        check_in_event.set()
                     else:
-                        result_container[0] = interim_result
+                        self.logger.info(f"用户 {self.nickname_for_logging}: 未找到'签到'按钮（或按钮点击已处理），解析当前收到的消息。")
+                        result_container[0] = await self._parse_response_text(event.raw_text)
+                        check_in_event.set()
                 else:
-                    self.logger.info(f"用户 {self.nickname_for_logging}: 未找到'签到'按钮，解析当前收到的消息。")
-                    result_container[0] = await self._parse_response_text(event.raw_text)
+                    self.logger.debug(f"用户 {self.nickname_for_logging}: 按钮点击已尝试/处理，此消息事件 '{response_message_text_capture}...' 将由主处理流程或后续步骤管理。")
+                    if not check_in_event.is_set():
+                        current_message_parsed_result = await self._parse_response_text(event.raw_text)
+                        if current_message_parsed_result["success"] or "重复签到" in current_message_parsed_result["message"] or "待判断" not in current_message_parsed_result["message"]:
+                            self.logger.info(f"用户 {self.nickname_for_logging}: 按钮点击已处理，将当前消息解析为最终结果: {current_message_parsed_result}")
+                            result_container[0] = current_message_parsed_result
+                            check_in_event.set()
+                        else:
+                            self.logger.debug(f"用户 {self.nickname_for_logging}: 按钮点击已处理，当前消息 '{response_message_text_capture}...' 不是明确的最终状态，等待主流程处理或超时。")
             
             except Exception as e_handler:
                 self.logger.error(f"用户 {self.nickname_for_logging}: 处理机器人响应时发生意外错误: {e_handler}")
                 result_container[0] = {"success": False, "message": f"处理机器人响应时发生意外错误: {e_handler}"}
-            finally:
-                check_in_event.set()
+                if not check_in_event.is_set():
+                    check_in_event.set()
 
         active_handler = self.client.add_event_handler(bot_response_handler, events.NewMessage(from_users=self.bot_entity))
         self.logger.info(f"用户 {self.nickname_for_logging}: 等待机器人响应 (超时: {self.timeout_seconds} 秒)...")
