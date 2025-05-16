@@ -10,6 +10,7 @@ class CheckinStrategy:
         self.nickname_for_logging = nickname_for_logging
         self.timeout_seconds = 10
         self.button_click_attempted_event = None
+        self.first_click_lock = None
 
     async def send_command(self, command_text):
         await self.client.send_message(self.bot_entity, command_text)
@@ -111,6 +112,7 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
 
         check_in_event = asyncio.Event()
         self.button_click_attempted_event = asyncio.Event()
+        self.first_click_lock = asyncio.Lock()
         result_container = [{"success": False, "message": "签到过程未启动或未完成。"}]
 
         async def bot_response_handler(event):
@@ -121,34 +123,53 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
             response_message_text_capture = event.raw_text[:100]
             self.logger.info(f"用户 {self.nickname_for_logging}: 收到来自 {self.bot_entity.username} 的消息: {response_message_text_capture}...")
 
+            is_responsible_for_first_click = False
             try:
                 if not self.button_click_attempted_event.is_set():
-                    clicked_button, click_obj = await self._find_and_click_checkin_button(event)
+                    async with self.first_click_lock:
+                        if not self.button_click_attempted_event.is_set():
+                            is_responsible_for_first_click = True
+                            self.button_click_attempted_event.set()
 
+                if is_responsible_for_first_click:
+                    clicked_button, click_obj = await self._find_and_click_checkin_button(event)
                     if clicked_button:
-                        self.button_click_attempted_event.set()
                         interim_result, needs_follow_up = await self._handle_alert_or_prepare_follow_up(click_obj)
-                        
                         if needs_follow_up:
                             final_result = await self._process_follow_up_message()
                             result_container[0] = final_result
                         else:
                             result_container[0] = interim_result
-                        check_in_event.set()
                     else:
-                        self.logger.info(f"用户 {self.nickname_for_logging}: 未找到'签到'按钮（或按钮点击已处理），解析当前收到的消息。")
+                        self.logger.info(f"用户 {self.nickname_for_logging}: 在首次处理的消息中未找到'签到'按钮，解析当前消息。")
                         result_container[0] = await self._parse_response_text(event.raw_text)
+                    
+                    if not check_in_event.is_set():
                         check_in_event.set()
                 else:
-                    self.logger.debug(f"用户 {self.nickname_for_logging}: 按钮点击已尝试/处理，此消息事件 '{response_message_text_capture}...' 将由主处理流程或后续步骤管理。")
                     if not check_in_event.is_set():
+                        self.logger.debug(f"用户 {self.nickname_for_logging}: 按钮点击已尝试/处理，解析后续消息: {response_message_text_capture}")
                         current_message_parsed_result = await self._parse_response_text(event.raw_text)
-                        if current_message_parsed_result["success"] or "重复签到" in current_message_parsed_result["message"] or "待判断" not in current_message_parsed_result["message"]:
-                            self.logger.info(f"用户 {self.nickname_for_logging}: 按钮点击已处理，将当前消息解析为最终结果: {current_message_parsed_result}")
+                        
+                        is_previous_result_uncertain = (
+                            result_container[0]["message"] == "签到过程未启动或未完成." or
+                            (not result_container[0]["success"] and "待判断" in result_container[0]["message"]) or
+                            (not result_container[0]["success"] and "按钮已点击，等待后续聊天消息" in result_container[0]["message"])
+                        )
+                        is_current_result_conclusive = (
+                            current_message_parsed_result["success"] or
+                            "重复签到" in current_message_parsed_result["message"] or
+                            "待判断" not in current_message_parsed_result["message"]
+                        )
+
+                        if is_current_result_conclusive and is_previous_result_uncertain:
+                            self.logger.info(f"用户 {self.nickname_for_logging}: 后续消息被解析为最终结果: {current_message_parsed_result}")
                             result_container[0] = current_message_parsed_result
                             check_in_event.set()
+                        elif is_current_result_conclusive and not is_previous_result_uncertain and result_container[0] != current_message_parsed_result:
+                             self.logger.info(f"用户 {self.nickname_for_logging}: 收到额外的明确后续消息 {current_message_parsed_result}，但已有结果 {result_container[0]}。")
                         else:
-                            self.logger.debug(f"用户 {self.nickname_for_logging}: 按钮点击已处理，当前消息 '{response_message_text_capture}...' 不是明确的最终状态，等待主流程处理或超时。")
+                            self.logger.debug(f"用户 {self.nickname_for_logging}: 后续消息 '{response_message_text_capture}' 未被用作最终结果或状态未改变。")
             
             except Exception as e_handler:
                 self.logger.error(f"用户 {self.nickname_for_logging}: 处理机器人响应时发生意外错误: {e_handler}")
