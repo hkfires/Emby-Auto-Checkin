@@ -210,7 +210,7 @@ STRATEGY_MAPPING = {
 }
 
 STRATEGY_DISPLAY_NAMES = {
-    "start_button_alert": "/start点击签到按钮",
+    "start_button_alert": "/start+签到按钮",
     "checkin_text": "/checkin直接签到",
 }
 
