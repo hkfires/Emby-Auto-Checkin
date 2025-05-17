@@ -113,9 +113,10 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
         check_in_event = asyncio.Event()
         self.button_click_attempted_event = asyncio.Event()
         self.first_click_lock = asyncio.Lock()
-        result_container = [{"success": False, "message": "签到过程未启动或未完成。"}]
+        current_result = {"success": False, "message": "签到过程未启动或未完成."} # 使用字典替代列表
 
         async def bot_response_handler(event):
+            nonlocal current_result # 允许修改外部作用域的 current_result
             if check_in_event.is_set():
                 self.logger.debug(f"用户 {self.nickname_for_logging}: 主签到事件已完成或超时，忽略新的消息事件。")
                 return
@@ -136,44 +137,49 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
                     if clicked_button:
                         interim_result, needs_follow_up = await self._handle_alert_or_prepare_follow_up(click_obj)
                         if needs_follow_up:
-                            final_result = await self._process_follow_up_message()
-                            result_container[0] = final_result
+                            final_result_val = await self._process_follow_up_message()
+                            current_result = final_result_val
                         else:
-                            result_container[0] = interim_result
+                            current_result = interim_result
                     else:
                         self.logger.info(f"用户 {self.nickname_for_logging}: 在首次处理的消息中未找到'签到'按钮，解析当前消息。")
-                        result_container[0] = await self._parse_response_text(event.raw_text)
+                        current_result = await self._parse_response_text(event.raw_text)
                     
                     if not check_in_event.is_set():
                         check_in_event.set()
-                else:
-                    if not check_in_event.is_set():
+                else: # is_responsible_for_first_click is False, this is a follow-up message handler
+                    if not check_in_event.is_set(): # Only process if main flow not complete
                         self.logger.debug(f"用户 {self.nickname_for_logging}: 按钮点击已尝试/处理，解析后续消息: {response_message_text_capture}")
-                        current_message_parsed_result = await self._parse_response_text(event.raw_text)
-                        
-                        is_previous_result_uncertain = (
-                            result_container[0]["message"] == "签到过程未启动或未完成." or
-                            (not result_container[0]["success"] and "待判断" in result_container[0]["message"]) or
-                            (not result_container[0]["success"] and "按钮已点击，等待后续聊天消息" in result_container[0]["message"])
-                        )
-                        is_current_result_conclusive = (
-                            current_message_parsed_result["success"] or
-                            "重复签到" in current_message_parsed_result["message"] or
-                            "待判断" not in current_message_parsed_result["message"]
-                        )
+                        parsed_follow_up = await self._parse_response_text(event.raw_text)
 
-                        if is_current_result_conclusive and is_previous_result_uncertain:
-                            self.logger.info(f"用户 {self.nickname_for_logging}: 后续消息被解析为最终结果: {current_message_parsed_result}")
-                            result_container[0] = current_message_parsed_result
+                        if parsed_follow_up["success"]:
+                            self.logger.info(f"用户 {self.nickname_for_logging}: 后续消息确认为成功: {parsed_follow_up}")
+                            current_result = parsed_follow_up
                             check_in_event.set()
-                        elif is_current_result_conclusive and not is_previous_result_uncertain and result_container[0] != current_message_parsed_result:
-                             self.logger.info(f"用户 {self.nickname_for_logging}: 收到额外的明确后续消息 {current_message_parsed_result}，但已有结果 {result_container[0]}。")
                         else:
-                            self.logger.debug(f"用户 {self.nickname_for_logging}: 后续消息 '{response_message_text_capture}' 未被用作最终结果或状态未改变。")
+                            is_already_checked_in = "重复签到" in parsed_follow_up["message"] or \
+                                                  "已签到" in parsed_follow_up["message"] or \
+                                                  "已经签到" in parsed_follow_up["message"]
+                            
+                            is_initial_state = current_result["message"] == "签到过程未启动或未完成."
+
+                            if is_already_checked_in and is_initial_state:
+                                self.logger.info(f"用户 {self.nickname_for_logging}: 后续消息确认为已签到/重复: {parsed_follow_up}")
+                                current_result = parsed_follow_up
+                                check_in_event.set()
+                            elif not is_already_checked_in and "待判断" not in parsed_follow_up["message"]:
+                                if is_initial_state:
+                                     self.logger.info(f"用户 {self.nickname_for_logging}: 后续消息为明确失败状态: {parsed_follow_up}，更新结果。")
+                                     current_result = parsed_follow_up
+                                     check_in_event.set()
+                                else:
+                                     self.logger.debug(f"用户 {self.nickname_for_logging}: 后续消息 '{response_message_text_capture}' 未覆盖已有非初始结果 {current_result}。")
+                            else:
+                                self.logger.debug(f"用户 {self.nickname_for_logging}: 后续消息 '{response_message_text_capture}' 未立即更新结果，等待主流程或超时。")
             
             except Exception as e_handler:
                 self.logger.error(f"用户 {self.nickname_for_logging}: 处理机器人响应时发生意外错误: {e_handler}")
-                result_container[0] = {"success": False, "message": f"处理机器人响应时发生意外错误: {e_handler}"}
+                current_result = {"success": False, "message": f"处理机器人响应时发生意外错误: {e_handler}"}
                 if not check_in_event.is_set():
                     check_in_event.set()
 
@@ -182,14 +188,14 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
 
         try:
             await asyncio.wait_for(check_in_event.wait(), timeout=self.timeout_seconds)
-            if result_container[0]["success"]:
+            if current_result["success"]: # 使用 current_result
                 self.logger.info(f"用户 {self.nickname_for_logging}: 签到成功。")
             else:
                 self.logger.warning(f"用户 {self.nickname_for_logging}: 签到失败。")
         except asyncio.TimeoutError:
             self.logger.warning(f"用户 {self.nickname_for_logging}: 等待机器人响应超时。")
-            if result_container[0]["message"] == "签到过程未启动或未完成。":
-                 result_container[0] = {"success": False, "message": "等待机器人响应超时（未收到任何可处理消息或按钮点击未完成）。"}
+            if current_result["message"] == "签到过程未启动或未完成.": # 使用 current_result
+                 current_result = {"success": False, "message": "等待机器人响应超时（未收到任何可处理消息或按钮点击未完成）。"}
         finally:
             if self.client and self.client.is_connected() and active_handler:
                 try:
@@ -198,7 +204,7 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
                 except Exception as e_remove_handler:
                     self.logger.error(f"用户 {self.nickname_for_logging}: 移除事件处理器失败: {e_remove_handler}")
         
-        return result_container[0]
+        return current_result # 返回 current_result
 
 class CheckinCommandTextStrategy(CheckinStrategy):
     async def check_in(self):

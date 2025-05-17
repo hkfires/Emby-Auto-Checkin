@@ -35,6 +35,25 @@ def run_scheduled_task_sync(user_telegram_id, user_nickname, bot_username, sessi
 
         log_identifier = f"{user_nickname} (TGID: {user_telegram_id})" if user_telegram_id else user_nickname
 
+        strategy_identifier = "start_button_alert"
+        
+        bots_list = config.get('bots', [])
+        
+        found_strategy_for_bot = False
+        for bot_config in bots_list:
+            if isinstance(bot_config, dict) and bot_config.get('username') == bot_username:
+                configured_strategy = bot_config.get('strategy')
+                if configured_strategy:
+                    strategy_identifier = configured_strategy
+                    logger.info(f"计划任务 (async_task_logic): 为 Bot: {bot_username} 从 'bots' 配置中找到策略: {strategy_identifier}")
+                else:
+                    logger.warning(f"计划任务 (async_task_logic): Bot: {bot_username} 在 'bots' 配置中未指定 'strategy'，将使用默认策略: {strategy_identifier}")
+                found_strategy_for_bot = True
+                break
+        
+        if not found_strategy_for_bot:
+            logger.warning(f"计划任务 (async_task_logic): 未在 'bots' 配置列表中找到 Bot: {bot_username} 的策略定义，将使用默认策略: {strategy_identifier}")
+
         if not api_id or not api_hash:
             logger.error(f"计划任务 User: {log_identifier}, Bot: {bot_username} 失败: API ID/Hash 未配置。")
             result = {"success": False, "message": "API ID/Hash 未配置."}
@@ -42,15 +61,16 @@ def run_scheduled_task_sync(user_telegram_id, user_nickname, bot_username, sessi
              logger.error(f"计划任务 User: {log_identifier}, Bot: {bot_username} 失败: Session name 未提供。")
              result = {"success": False, "message": "Session name 未提供."}
         else:
-            logger.info(f"计划任务 (async_task_logic): 开始执行签到任务 User: {log_identifier}, Bot: {bot_username}")
-            result = await telethon_check_in(api_id, api_hash, user_nickname, session_name, bot_username)
+            logger.info(f"计划任务 (async_task_logic): 开始执行签到任务 User: {log_identifier}, Bot: {bot_username}, Strategy: {strategy_identifier}")
+            result = await telethon_check_in(api_id, api_hash, user_nickname, session_name, bot_username, strategy_identifier)
 
         log_entry = {
             "checkin_type": "自动签到",
             "user_nickname": user_nickname,
             "bot_username": bot_username,
             "success": result.get("success"),
-            "message": result.get("message")
+            "message": result.get("message"),
+            "strategy_used": strategy_identifier 
         }
         save_daily_checkin_log(log_entry)
         logger.info(f"计划任务 (async_task_logic): 任务 User: {log_identifier}, Bot: {bot_username} 执行完毕. Result: {result.get('success')}")
