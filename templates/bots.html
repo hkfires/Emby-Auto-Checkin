@@ -40,15 +40,15 @@
     <tbody>
         {% for bot_item in bots %}
         <tr>
-            <td class="align-middle">{{ bot_item.username }}</td>
+            <td class="align-middle">{{ bot_item.bot_username }}</td>
             <td class="align-middle"><span class="badge bg-primary text-white py-2 px-2">{{ bot_item.strategy_display_name | default(bot_item.strategy) }}</span></td>
             <td class="align-middle">
-                <button class="btn btn-info btn-sm manual-checkin-btn" data-bot="{{ bot_item.username }}" data-strategy="{{ bot_item.strategy }}" {% if not users or users | selectattr('status', 'equalto', 'logged_in') | list | length == 0 %}disabled title="没有已登录的用户可用于签到"{% endif %}>
+                <button class="btn btn-info btn-sm manual-checkin-btn" data-bot="{{ bot_item.bot_username }}" data-strategy="{{ bot_item.strategy }}" {% if not users or users | selectattr('status', 'equalto', 'logged_in') | list | length == 0 %}disabled title="没有已登录的用户可用于签到"{% endif %}>
                     手动签到
                 </button>
             </td>
             <td class="align-middle">
-                <button class="btn btn-danger btn-sm delete-bot-btn" data-bot="{{ bot_item.username }}">删除</button>
+                <button class="btn btn-danger btn-sm delete-bot-btn" data-bot="{{ bot_item.bot_username }}">删除</button>
             </td>
         </tr>
         {% endfor %}

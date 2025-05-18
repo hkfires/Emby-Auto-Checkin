@@ -218,6 +218,6 @@ def update_scheduler():
         
         if config_changed:
             save_config(config)
-            logger.info("签到任务配置已更新 (last_scheduled_date, scheduled_hour, scheduled_minute)。")
+            logger.info("签到任务配置已更新。")
     else:
         logger.info("每日自动签到任务已禁用。所有单个任务作业已被移除。")
