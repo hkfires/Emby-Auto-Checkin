@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 DATA_DIR = "data"
 DB_FILE = os.path.join(DATA_DIR, 'checkin_log.db')
 
-def init_db():
+def init_log_db():
     os.makedirs(DATA_DIR, exist_ok=True)
     try:
         with sqlite3.connect(DB_FILE) as conn:

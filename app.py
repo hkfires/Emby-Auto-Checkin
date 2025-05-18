@@ -6,7 +6,7 @@ from telethon import TelegramClient, errors
 from datetime import date, datetime
 from config import load_config, save_config
 from telegram_client import telethon_check_in, get_session_name
-from log import save_daily_checkin_log, init_db as init_log_db, load_checkin_log_by_date
+from log import save_daily_checkin_log, init_log_db, load_checkin_log_by_date
 from scheduler import update_scheduler
 from utils import format_datetime_filter, get_masked_api_credentials, get_processed_bots_list, update_api_credential
 from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
