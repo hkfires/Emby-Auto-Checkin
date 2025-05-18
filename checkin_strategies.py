@@ -24,7 +24,7 @@ class CheckinStrategy:
         """
         processed_text = text_content.strip()
 
-        PRIMARY_SUCCESS_KEYWORD = ["签到成功"]
+        PRIMARY_SUCCESS_KEYWORD = ["签到成功", "您获得了"]
         ALREADY_CHECKED_IN_KEYWORDS = ["已经签到", "已签到", "重复签到"]
         UNDETERMINED_KEYWORDS = ["Done"]
 
@@ -116,7 +116,7 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
         current_result = {"success": False, "message": "签到过程未启动或未完成."} # 使用字典替代列表
 
         async def bot_response_handler(event):
-            nonlocal current_result # 允许修改外部作用域的 current_result
+            nonlocal current_result
             if check_in_event.is_set():
                 self.logger.debug(f"用户 {self.nickname_for_logging}: 主签到事件已完成或超时，忽略新的消息事件。")
                 return
@@ -147,8 +147,8 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
                     
                     if not check_in_event.is_set():
                         check_in_event.set()
-                else: # is_responsible_for_first_click is False, this is a follow-up message handler
-                    if not check_in_event.is_set(): # Only process if main flow not complete
+                else:
+                    if not check_in_event.is_set():
                         self.logger.debug(f"用户 {self.nickname_for_logging}: 按钮点击已尝试/处理，解析后续消息: {response_message_text_capture}")
                         parsed_follow_up = await self._parse_response_text(event.raw_text)
 
@@ -188,7 +188,7 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
 
         try:
             await asyncio.wait_for(check_in_event.wait(), timeout=self.timeout_seconds)
-            if current_result["success"]: # 使用 current_result
+            if current_result["success"]:
                 self.logger.info(f"用户 {self.nickname_for_logging}: 签到成功。")
             else:
                 self.logger.warning(f"用户 {self.nickname_for_logging}: 签到失败。")
@@ -204,7 +204,7 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
                 except Exception as e_remove_handler:
                     self.logger.error(f"用户 {self.nickname_for_logging}: 移除事件处理器失败: {e_remove_handler}")
         
-        return current_result # 返回 current_result
+        return current_result
 
 class CheckinCommandTextStrategy(CheckinStrategy):
     async def check_in(self):

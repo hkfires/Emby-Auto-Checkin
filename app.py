@@ -547,27 +547,20 @@ def bots_page():
     
     bots_list = config.get('bots', [])
     processed_bots = []
-    config_changed = False
 
     for bot_entry in bots_list:
-        bot_dict = None
-        if isinstance(bot_entry, str):
-            bot_dict = {"username": bot_entry, "strategy": "start_button_alert"}
-            config_changed = True
-        elif isinstance(bot_entry, dict) and "username" in bot_entry:
-            bot_dict = bot_entry
+        if isinstance(bot_entry, dict) and bot_entry.get('bot_username'):
+            bot_dict = dict(bot_entry) 
+            
             current_strategy = bot_dict.get('strategy')
             if not current_strategy or current_strategy not in STRATEGY_MAPPING:
+                logger.warning(f"机器人 '{bot_dict.get('bot_username')}' 在 bots_page 中配置了无效或缺失的策略 '{current_strategy}'。将默认为 'start_button_alert' (仅用于显示)。")
                 bot_dict["strategy"] = "start_button_alert"
-                config_changed = True
-        
-        if bot_dict:
+            
             bot_dict["strategy_display_name"] = STRATEGY_DISPLAY_NAMES.get(bot_dict["strategy"], bot_dict["strategy"])
             processed_bots.append(bot_dict)
-            
-    if config_changed:
-        config['bots'] = processed_bots
-        save_config(config)
+        else:
+            logger.warning(f"Skipping invalid or malformed bot entry in bots_page: {bot_entry}")     
 
     return render_template('bots.html', bots=processed_bots, users=config.get('users', []), available_strategies=available_strategies_for_template)
 
@@ -587,10 +580,10 @@ def api_add_bot():
     if 'bots' not in config or not isinstance(config['bots'], list):
         config['bots'] = []
     
-    existing_bot = next((b for b in config.get('bots', []) if isinstance(b, dict) and b.get('username') == bot_username), None)
+    existing_bot = next((b for b in config.get('bots', []) if isinstance(b, dict) and b.get('bot_username') == bot_username), None)
 
     if not existing_bot:
-        new_bot_entry = {"username": bot_username, "strategy": strategy}
+        new_bot_entry = {"bot_username": bot_username, "strategy": strategy}
         config['bots'].append(new_bot_entry)
         save_config(config)
         logger.info(f"机器人 {bot_username} (策略: {strategy}) 已添加。")
@@ -612,7 +605,7 @@ def api_delete_bot():
         return jsonify({"success": False, "message": "未提供机器人用户名。"}), 400
 
     original_bot_count = len(config.get('bots', []))
-    config['bots'] = [b for b in config.get('bots', []) if not (isinstance(b, dict) and b.get('username') == bot_to_delete_username)]
+    config['bots'] = [b for b in config.get('bots', []) if not (isinstance(b, dict) and b.get('bot_username') == bot_to_delete_username)]
     
     if len(config.get('bots',[])) < original_bot_count:
         if 'checkin_tasks' in config:
@@ -631,39 +624,27 @@ def tasks_page():
     from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
 
     bots_data = []
-    _config_changed_bots = False
-    temp_bots_list = config.get('bots', [])
+    temp_bots_list = config.get('bots', []) 
     for bot_entry_config in temp_bots_list:
-        bot_dict = None
-        if isinstance(bot_entry_config, str):
-            bot_dict = {"username": bot_entry_config, "strategy": "start_button_alert"}
-            _config_changed_bots = True
-        elif isinstance(bot_entry_config, dict) and "username" in bot_entry_config:
-            bot_dict = bot_entry_config
+        if isinstance(bot_entry_config, dict) and bot_entry_config.get('bot_username'):
+            bot_dict = dict(bot_entry_config)
+
             current_strategy = bot_dict.get('strategy')
             if not current_strategy or current_strategy not in STRATEGY_MAPPING:
+                logger.warning(f"机器人 '{bot_dict.get('bot_username')}' 在 tasks_page 中配置了无效或缺失的策略 '{current_strategy}'。将默认为 'start_button_alert' (仅用于显示)。")
                 bot_dict["strategy"] = "start_button_alert"
-                _config_changed_bots = True
-        
-        if bot_dict:
+            
             bot_dict["strategy_display_name"] = STRATEGY_DISPLAY_NAMES.get(bot_dict["strategy"], bot_dict["strategy"])
             bots_data.append(bot_dict)
-
-    if _config_changed_bots:
-        config['bots'] = bots_data
-        save_config(config)
-
-    logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
-    valid_tasks = []
-    
-    bot_strategy_map = {b.get('username'): b.get('strategy', 'start_button_alert') for b in bots_data}
-    bot_strategy_display_map = {b.get('username'): b.get('strategy_display_name', b.get('strategy', 'start_button_alert')) for b in bots_data}
+        else:
+            logger.warning(f"Skipping invalid or malformed bot entry in tasks_page: {bot_entry_config}")
 
 
     logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
     valid_tasks = []
     
-    bot_strategy_map = {b.get('username'): b.get('strategy', 'start_button_alert') for b in bots_data}
+    bot_strategy_map = {b.get('bot_username'): b.get('strategy', 'start_button_alert') for b in bots_data if b.get('bot_username')}
+    bot_strategy_display_map = {b.get('bot_username'): b.get('strategy_display_name', b.get('strategy', 'start_button_alert')) for b in bots_data if b.get('bot_username')}
 
     if 'checkin_tasks' in config:
         all_users_list = config.get('users', [])
@@ -794,13 +775,11 @@ async def api_manual_checkin():
     session_name = user_config.get('session_name')
     user_nickname_for_operation = user_config.get('nickname', f"TGID_{user_telegram_id}")
     bots_list = config.get('bots', [])
-    bot_config = next((b for b in bots_list if isinstance(b, dict) and b.get('username') == bot_username), None)
+    bot_config = next((b for b in bots_list if isinstance(b, dict) and b.get('bot_username') == bot_username), None)
     
     strategy_identifier = "start_button_alert"
     if bot_config:
         strategy_identifier = bot_config.get('strategy', "start_button_alert")
-    elif next((b for b in bots_list if isinstance(b, str) and b == bot_username), None):
-        pass
     else:
         return jsonify({"success": False, "message": f"机器人 '{bot_username}' 未在配置中找到。"}), 400
 
@@ -845,7 +824,6 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
             logger.info(f"内部调用签到所有任务: {message}")
             return {"success": True, "message": message, "all_tasks_results": []}
 
-
     results_list = []
     all_users_list = config.get('users', [])
     user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
@@ -854,14 +832,15 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
     bots_list_for_strat_map = config.get('bots', [])
     bot_strategy_map_all = {}
     for b_item in bots_list_for_strat_map:
-        if isinstance(b_item, dict) and 'username' in b_item:
+        if isinstance(b_item, dict) and b_item.get('bot_username'): # Check for dict and bot_username key
+            bot_name_key = b_item['bot_username']
             strat = b_item.get('strategy', 'start_button_alert')
             if strat not in STRATEGY_MAPPING:
-                logger.warning(f"api_checkin_all: 机器人 {b_item['username']} 配置了无效策略 '{strat}'，将使用默认。")
+                logger.warning(f"api_checkin_all: 机器人 {bot_name_key} 配置了无效策略 '{strat}'，将使用默认。")
                 strat = 'start_button_alert'
-            bot_strategy_map_all[b_item['username']] = strat
-        elif isinstance(b_item, str):
-            bot_strategy_map_all[b_item] = 'start_button_alert'
+            bot_strategy_map_all[bot_name_key] = strat
+        else:
+            logger.warning(f"api_checkin_all: 在 'bots' 配置列表中发现无效或格式不正确的条目: {b_item}，已跳过。")
 
 
     for task_config_entry in tasks_to_run:

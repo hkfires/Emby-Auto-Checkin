@@ -27,21 +27,34 @@ def get_random_time_in_range(start_h, start_m, end_h, end_m):
     rand_m = random_total_minutes % 60
     return rand_h, rand_m
 
-def run_scheduled_task_sync(user_telegram_id, user_nickname, bot_username, session_name):
+def run_scheduled_task_sync(user_telegram_id, bot_username):
     async def async_task_logic():
         config = load_config()
         api_id = config.get('api_id')
         api_hash = config.get('api_hash')
 
+        user_nickname = f"TGID_{user_telegram_id}"
+        session_name = None
+        user_found = False
+        for user_conf in config.get('users', []):
+            if user_conf.get('telegram_id') == user_telegram_id:
+                user_nickname = user_conf.get('nickname', user_nickname)
+                session_name = user_conf.get('session_name')
+                user_found = True
+                break
+        
+        if not user_found:
+            logger.error(f"计划任务 (async_task_logic): 未找到 TGID 为 {user_telegram_id} 的用户配置。")
+        elif not session_name:
+            logger.error(f"计划任务 (async_task_logic): 用户 {user_nickname} (TGID: {user_telegram_id}) 缺少 session_name。")
+
         log_identifier = f"{user_nickname} (TGID: {user_telegram_id})" if user_telegram_id else user_nickname
 
         strategy_identifier = "start_button_alert"
-        
         bots_list = config.get('bots', [])
-        
         found_strategy_for_bot = False
         for bot_config in bots_list:
-            if isinstance(bot_config, dict) and bot_config.get('username') == bot_username:
+            if isinstance(bot_config, dict) and bot_config.get('bot_username') == bot_username:
                 configured_strategy = bot_config.get('strategy')
                 if configured_strategy:
                     strategy_identifier = configured_strategy
@@ -58,8 +71,11 @@ def run_scheduled_task_sync(user_telegram_id, user_nickname, bot_username, sessi
             logger.error(f"计划任务 User: {log_identifier}, Bot: {bot_username} 失败: API ID/Hash 未配置。")
             result = {"success": False, "message": "API ID/Hash 未配置."}
         elif not session_name:
-             logger.error(f"计划任务 User: {log_identifier}, Bot: {bot_username} 失败: Session name 未提供。")
-             result = {"success": False, "message": "Session name 未提供."}
+             logger.error(f"计划任务 User: {log_identifier}, Bot: {bot_username} 失败: Session name 未找到或无效。")
+             result = {"success": False, "message": "Session name 未找到或无效."}
+        elif not user_found:
+            logger.error(f"计划任务 User: {log_identifier}, Bot: {bot_username} 失败: 用户配置未找到。")
+            result = {"success": False, "message": "用户配置未找到。"}
         else:
             logger.info(f"计划任务 (async_task_logic): 开始执行签到任务 User: {log_identifier}, Bot: {bot_username}, Strategy: {strategy_identifier}")
             result = await telethon_check_in(api_id, api_hash, user_nickname, session_name, bot_username, strategy_identifier)
@@ -80,11 +96,11 @@ def run_scheduled_task_sync(user_telegram_id, user_nickname, bot_username, sessi
 
     log_identifier_sync = f"{user_nickname} (TGID: {user_telegram_id})" if user_telegram_id else user_nickname
     try:
-        logger.info(f"计划任务 (sync_wrapper): 准备在独立事件循环中执行 User: {log_identifier_sync}, Bot: {bot_username}")
+        logger.info(f"计划任务 (sync_wrapper): 准备在独立事件循环中执行任务 for TGID: {user_telegram_id}, Bot: {bot_username}")
         loop.run_until_complete(async_task_logic())
-        logger.info(f"计划任务 (sync_wrapper): User: {log_identifier_sync}, Bot: {bot_username} 的异步逻辑执行完毕。")
+        logger.info(f"计划任务 (sync_wrapper): TGID: {user_telegram_id}, Bot: {bot_username} 的异步逻辑执行完毕。")
     except Exception as e:
-        logger.error(f"计划任务 (sync_wrapper) User: {log_identifier_sync}, Bot: {bot_username} 执行时发生顶层错误: {e}")
+        logger.error(f"计划任务 (sync_wrapper) TGID: {user_telegram_id}, Bot: {bot_username} 执行时发生顶层错误: {e}")
     finally:
         loop.close()
         asyncio.set_event_loop(None)
@@ -191,7 +207,7 @@ def update_scheduler():
                 scheduler.add_job(
                     run_scheduled_task_sync,
                     trigger=CronTrigger(hour=current_h, minute=current_m, timezone='Asia/Shanghai'),
-                    args=[user_telegram_id, current_task_user_nickname, bot_username, current_task_session_name],
+                    args=[user_telegram_id, bot_username],
                     id=job_id,
                     name=f"Checkin {current_task_user_nickname} (TGID:{user_telegram_id}) with {bot_username}",
                     replace_existing=True
