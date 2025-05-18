@@ -1,8 +1,5 @@
-import asyncio
-from telethon import TelegramClient, errors, events
-import re
-import logging
-from config import load_config
+from telethon import TelegramClient, errors
+import re, logging
 from checkin_strategies import get_strategy_class
 
 logger = logging.getLogger(__name__)

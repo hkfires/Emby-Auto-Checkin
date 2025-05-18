@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from telethon import events
 
 class CheckinStrategy:

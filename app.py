@@ -1,17 +1,15 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
-import logging
-import os
-import re
+import logging, os, re
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from telethon import TelegramClient, errors
 from datetime import date, datetime
-
 from config import load_config, save_config
 from telegram_client import telethon_check_in, get_session_name
 from log import save_daily_checkin_log, init_db as init_log_db, load_checkin_log_by_date
-from scheduler import update_scheduler, scheduler, run_scheduled_task_sync, get_random_time_in_range
-from utils import format_datetime_filter, get_masked_api_credentials
+from scheduler import update_scheduler
+from utils import format_datetime_filter, get_masked_api_credentials, get_processed_bots_list, update_api_credential
+from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -170,24 +168,20 @@ def change_password():
 @login_required
 def index():
     config = load_config()
-    selected_date_str = request.args.get('date')
-    checkin_log_for_display = []
+    selected_date_str = date.today().isoformat()
     display_date_label = "今日"
+    
+    requested_date_str = request.args.get('date')
 
-    if selected_date_str:
+    if requested_date_str:
         try:
-            datetime.strptime(selected_date_str, '%Y-%m-%d')
-            checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
-            display_date_label = selected_date_str
+            datetime.strptime(requested_date_str, '%Y-%m-%d')
+            selected_date_str = requested_date_str
+            display_date_label = requested_date_str
         except ValueError:
-            flash(f"提供的日期格式无效: {selected_date_str}。请使用 YYYY-MM-DD 格式。", "warning")
-            selected_date_str = date.today().isoformat()
-            checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
-            display_date_label = "今日"
-    else:
-        selected_date_str = date.today().isoformat()
-        checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
-        display_date_label = "今日"
+            flash(f"提供的日期格式无效: {requested_date_str}。请使用 YYYY-MM-DD 格式。", "warning")
+            
+    checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
         
     return render_template('index.html', 
                            config=config, 
@@ -196,6 +190,7 @@ def index():
                            display_date_label=display_date_label)
 
 app.jinja_env.filters['format_datetime'] = format_datetime_filter
+
 
 @app.route('/settings/api', methods=['GET', 'POST'])
 @login_required
@@ -206,23 +201,13 @@ def api_settings_page():
         submitted_api_hash = request.form.get('api_hash')
         current_api_id_display_val, current_api_hash_display_val = get_masked_api_credentials(config)
 
-        if submitted_api_id == current_api_id_display_val and submitted_api_id is not None:
-            pass
-        elif submitted_api_id == "":
-            config['api_id'] = None
-        else:
-            config['api_id'] = submitted_api_id
-
-        if submitted_api_hash == current_api_hash_display_val and submitted_api_hash is not None:
-            pass
-        elif submitted_api_hash == "":
-            config['api_hash'] = None
-        else:
-            config['api_hash'] = submitted_api_hash
+        update_api_credential(config, submitted_api_id, current_api_id_display_val, 'api_id')
+        update_api_credential(config, submitted_api_hash, current_api_hash_display_val, 'api_hash')
         
         save_config(config)
         flash("API 设置已成功保存。", "success")
         config = load_config()
+
 
     api_id_display_val, api_hash_display_val = get_masked_api_credentials(config)
     return render_template('api_settings.html',
@@ -280,7 +265,6 @@ def scheduler_settings_page():
             save_config(config)
             update_scheduler()
             flash("自动签到设置已成功保存。", "success")
-            config = load_config()
         except (ValueError, TypeError):
             flash("调度时间范围格式无效。请输入有效的数字。", "danger")
             return render_template('scheduler_settings.html', **render_context)
@@ -505,15 +489,10 @@ def api_delete_user():
 
     config['users'] = [u for u in config.get('users', []) if u.get('nickname') != nickname_to_delete]
     
-    if 'checkin_tasks' in config and user_telegram_id_to_delete:
+    if 'checkin_tasks' in config and user_telegram_id_to_delete is not None:
         config['checkin_tasks'] = [
-            t for t in config.get('checkin_tasks', []) 
-            if t.get('user_telegram_id') != user_telegram_id_to_delete
-        ]
-    elif 'checkin_tasks' in config:
-        config['checkin_tasks'] = [
-            t for t in config.get('checkin_tasks', [])
-            if t.get('user_nickname') != nickname_to_delete
+            task for task in config.get('checkin_tasks', [])
+            if task.get('user_telegram_id') != user_telegram_id_to_delete
         ]
 
     session_file_to_delete = os.path.join(DATA_DIR, f"{get_session_name(nickname_to_delete)}.session")
@@ -536,31 +515,16 @@ def api_delete_user():
 @login_required
 def bots_page():
     config = load_config()
-    from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
     
     available_strategies_for_template = []
     for key in STRATEGY_MAPPING.keys():
         available_strategies_for_template.append({
             "key": key,
-            "name": STRATEGY_DISPLAY_NAMES.get(key, key) 
+            "name": STRATEGY_DISPLAY_NAMES.get(key, key)
         })
     
-    bots_list = config.get('bots', [])
-    processed_bots = []
-
-    for bot_entry in bots_list:
-        if isinstance(bot_entry, dict) and bot_entry.get('bot_username'):
-            bot_dict = dict(bot_entry) 
-            
-            current_strategy = bot_dict.get('strategy')
-            if not current_strategy or current_strategy not in STRATEGY_MAPPING:
-                logger.warning(f"机器人 '{bot_dict.get('bot_username')}' 在 bots_page 中配置了无效或缺失的策略 '{current_strategy}'。将默认为 'start_button_alert' (仅用于显示)。")
-                bot_dict["strategy"] = "start_button_alert"
-            
-            bot_dict["strategy_display_name"] = STRATEGY_DISPLAY_NAMES.get(bot_dict["strategy"], bot_dict["strategy"])
-            processed_bots.append(bot_dict)
-        else:
-            logger.warning(f"Skipping invalid or malformed bot entry in bots_page: {bot_entry}")     
+    raw_bots_list = config.get('bots', [])
+    processed_bots = get_processed_bots_list(raw_bots_list)
 
     return render_template('bots.html', bots=processed_bots, users=config.get('users', []), available_strategies=available_strategies_for_template)
 
@@ -621,30 +585,14 @@ def api_delete_bot():
 @login_required
 def tasks_page():
     config = load_config()
-    from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
 
-    bots_data = []
-    temp_bots_list = config.get('bots', []) 
-    for bot_entry_config in temp_bots_list:
-        if isinstance(bot_entry_config, dict) and bot_entry_config.get('bot_username'):
-            bot_dict = dict(bot_entry_config)
-
-            current_strategy = bot_dict.get('strategy')
-            if not current_strategy or current_strategy not in STRATEGY_MAPPING:
-                logger.warning(f"机器人 '{bot_dict.get('bot_username')}' 在 tasks_page 中配置了无效或缺失的策略 '{current_strategy}'。将默认为 'start_button_alert' (仅用于显示)。")
-                bot_dict["strategy"] = "start_button_alert"
-            
-            bot_dict["strategy_display_name"] = STRATEGY_DISPLAY_NAMES.get(bot_dict["strategy"], bot_dict["strategy"])
-            bots_data.append(bot_dict)
-        else:
-            logger.warning(f"Skipping invalid or malformed bot entry in tasks_page: {bot_entry_config}")
-
+    processed_bots_data = get_processed_bots_list(config.get('bots', []))
 
     logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
     valid_tasks = []
     
-    bot_strategy_map = {b.get('bot_username'): b.get('strategy', 'start_button_alert') for b in bots_data if b.get('bot_username')}
-    bot_strategy_display_map = {b.get('bot_username'): b.get('strategy_display_name', b.get('strategy', 'start_button_alert')) for b in bots_data if b.get('bot_username')}
+    bot_strategy_map = {b['bot_username']: b['strategy'] for b in processed_bots_data}
+    bot_strategy_display_map = {b['bot_username']: b['strategy_display_name'] for b in processed_bots_data}
 
     if 'checkin_tasks' in config:
         all_users_list = config.get('users', [])
@@ -665,7 +613,7 @@ def tasks_page():
                 task_data['bot_strategy_display_name'] = bot_strategy_display_map.get(task_data['bot_username'], task_data['bot_strategy'])
                 valid_tasks.append(task_data)
     
-    return render_template('tasks.html', tasks=valid_tasks, users=logged_in_users, bots=bots_data)
+    return render_template('tasks.html', tasks=valid_tasks, users=logged_in_users, bots=processed_bots_data)
 
 
 @app.route('/api/tasks/add', methods=['POST'])
@@ -828,20 +776,8 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
     all_users_list = config.get('users', [])
     user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
 
-    from checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
-    bots_list_for_strat_map = config.get('bots', [])
-    bot_strategy_map_all = {}
-    for b_item in bots_list_for_strat_map:
-        if isinstance(b_item, dict) and b_item.get('bot_username'): # Check for dict and bot_username key
-            bot_name_key = b_item['bot_username']
-            strat = b_item.get('strategy', 'start_button_alert')
-            if strat not in STRATEGY_MAPPING:
-                logger.warning(f"api_checkin_all: 机器人 {bot_name_key} 配置了无效策略 '{strat}'，将使用默认。")
-                strat = 'start_button_alert'
-            bot_strategy_map_all[bot_name_key] = strat
-        else:
-            logger.warning(f"api_checkin_all: 在 'bots' 配置列表中发现无效或格式不正确的条目: {b_item}，已跳过。")
-
+    processed_bots = get_processed_bots_list(config.get('bots', []))
+    bot_strategy_map_all = {bot['bot_username']: bot['strategy'] for bot in processed_bots if bot.get('bot_username')}
 
     for task_config_entry in tasks_to_run:
         bot_username = task_config_entry.get('bot_username')
@@ -866,7 +802,7 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
         if user_config and user_config.get('status') == 'logged_in':
             session_name = user_config.get('session_name')
             strategy_identifier = bot_strategy_map_all.get(bot_username, "start_button_alert")
-            strategy_display = get_strategy_display_name(strategy_identifier)
+            strategy_display = STRATEGY_DISPLAY_NAMES.get(strategy_identifier, strategy_identifier)
             try:
                 current_task_result = await telethon_check_in(api_id, api_hash, log_nickname, session_name, bot_username, strategy_identifier)
             except Exception as e_checkin:

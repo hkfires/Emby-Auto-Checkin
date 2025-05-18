@@ -1,6 +1,5 @@
-import sqlite3
-import os
-from datetime import date, datetime
+import sqlite3, os
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
