@@ -156,10 +156,7 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
                             current_result = parsed_follow_up
                             check_in_event.set()
                         else:
-                            is_already_checked_in = "重复签到" in parsed_follow_up["message"] or \
-                                                  "已签到" in parsed_follow_up["message"] or \
-                                                  "已经签到" in parsed_follow_up["message"]
-                            
+                            is_already_checked_in = "重复签到" in parsed_follow_up["message"]
                             is_initial_state = current_result["message"] == "签到过程未启动或未完成."
 
                             if is_already_checked_in and is_initial_state:

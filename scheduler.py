@@ -94,7 +94,6 @@ def run_scheduled_task_sync(user_telegram_id, bot_username):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    log_identifier_sync = f"{user_nickname} (TGID: {user_telegram_id})" if user_telegram_id else user_nickname
     try:
         logger.info(f"计划任务 (sync_wrapper): 准备在独立事件循环中执行任务 for TGID: {user_telegram_id}, Bot: {bot_username}")
         loop.run_until_complete(async_task_logic())
