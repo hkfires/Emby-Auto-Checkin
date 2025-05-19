@@ -86,9 +86,5 @@ docker compose logs -f
 进入项目根目录，执行以下代码
 
 ```bash
-# 拉取最新代码
-git pull
-
-# 构建并重启服务
-docker compose up --build -d
+bash update.sh
 ```
