@@ -9,3 +9,4 @@ data
 README.md
 Dockerfile
 docker-compose.yml
+update.sh
