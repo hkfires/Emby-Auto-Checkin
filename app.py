@@ -5,11 +5,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from telethon import TelegramClient, errors
 from datetime import date, datetime
 from config import load_config, save_config
-from telegram_client import telethon_check_in, get_session_name
+from telegram_client import telethon_check_in, get_session_name, resolve_chat_identifier, send_message_to_chat_id
 from log import save_daily_checkin_log, init_log_db, load_checkin_log_by_date
 from scheduler import update_scheduler
 from utils import format_datetime_filter, get_masked_api_credentials, get_processed_bots_list, update_api_credential
-from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
+from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES, get_strategy_display_name, get_strategy_class
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def load_user(user_id):
 
 @app.before_request
 def require_api_setup():
-    exempt_endpoints = ['login', 'logout', 'static', 'check_first_run_status', 'api_settings_page']
+    exempt_endpoints = ['login', 'logout', 'static', 'check_first_run_status', 'api_settings_page', 'chats', 'delete_chat']
     
     if current_user.is_authenticated and request.endpoint not in exempt_endpoints:
         config = load_config()
@@ -517,16 +517,106 @@ def bots_page():
     config = load_config()
     
     available_strategies_for_template = []
-    for key in STRATEGY_MAPPING.keys():
-        available_strategies_for_template.append({
-            "key": key,
-            "name": STRATEGY_DISPLAY_NAMES.get(key, key)
-        })
+    for key, strategy_info in STRATEGY_DISPLAY_NAMES.items():
+        if isinstance(strategy_info, dict) and strategy_info.get("target_type") in ["bot", "any"]:
+            available_strategies_for_template.append({
+                "key": key,
+                "name": strategy_info.get("name", key)
+            })
     
     raw_bots_list = config.get('bots', [])
     processed_bots = get_processed_bots_list(raw_bots_list)
 
     return render_template('bots.html', bots=processed_bots, users=config.get('users', []), available_strategies=available_strategies_for_template)
+
+
+@app.route('/chats', methods=['GET', 'POST'])
+@login_required
+async def chats():
+    config = load_config()
+    if request.method == 'POST':
+        chat_identifier = request.form.get('chat_identifier')
+        user_nickname_for_解析 = request.form.get('user_nickname')
+        strategy_identifier = request.form.get('strategy_identifier')
+        custom_chat_title = request.form.get('custom_chat_title', '').strip()
+
+        if not chat_identifier or not user_nickname_for_解析 or not strategy_identifier:
+            flash('群组标识符、解析用户和策略均不能为空。', 'danger')
+        else:
+            user_for_解析 = next((u for u in config.get('users', []) if u.get('nickname') == user_nickname_for_解析), None)
+            if not user_for_解析 or user_for_解析.get('status') != 'logged_in':
+                flash(f"选择的解析用户 '{user_nickname_for_解析}' 无效或未登录。", 'danger')
+            else:
+                api_id = config.get('api_id')
+                api_hash = config.get('api_hash')
+                user_session_name = user_for_解析.get('session_name')
+
+                if not api_id or not api_hash:
+                    flash('请先在API设置中配置API ID和Hash。', 'danger')
+                elif not user_session_name:
+                    flash(f"用户 '{user_nickname_for_解析}' 的会话名称未找到，可能需要重新登录该用户。", 'danger')
+                else:
+                    logger.info(f"尝试解析群组: ID/Link='{chat_identifier}', 使用用户='{user_nickname_for_解析}' (会话: {user_session_name})")
+                    resolved_data = await resolve_chat_identifier(api_id, api_hash, user_session_name, chat_identifier, user_nickname_for_解析)
+                    
+                    if resolved_data.get("success"):
+                        chat_id = resolved_data["id"]
+                        chat_name_from_telegram = resolved_data["name"]
+                        
+                        final_chat_title = custom_chat_title if custom_chat_title else chat_name_from_telegram
+
+                        if 'chats' not in config or not isinstance(config['chats'], list):
+                            config['chats'] = []
+                        
+                        existing_chat = next((c for c in config['chats'] if c.get('chat_id') == chat_id), None)
+                        if existing_chat:
+                            flash(f"群组 '{final_chat_title}' (ID: {chat_id}) 已经存在。", 'warning')
+                        else:
+                            new_chat_entry = {
+                                "chat_id": chat_id,
+                                "chat_title": final_chat_title,
+                                "strategy_identifier": strategy_identifier
+                            }
+                            config['chats'].append(new_chat_entry)
+                            save_config(config)
+                            flash(f"群组 '{final_chat_title}' 添加成功！", 'success')
+                            logger.info(f"群组 '{final_chat_title}' (ID: {chat_id}) 已添加。")
+                    else:
+                        flash(f"添加群组失败: {resolved_data.get('message', '未知错误')}", 'danger')
+                        logger.error(f"解析群组 '{chat_identifier}' 失败: {resolved_data.get('message')}")
+        return redirect(url_for('chats'))
+
+    
+    chat_specific_strategies = {}
+    for key, strategy_info in STRATEGY_DISPLAY_NAMES.items():
+        if isinstance(strategy_info, dict) and strategy_info.get("target_type") in ["chat", "any"]:
+            chat_specific_strategies[key] = strategy_info.get("name", key)
+
+    return render_template('chats.html', 
+                           users=config.get('users', []), 
+                           config_chats=config.get('chats', []),
+                           strategy_display_names=chat_specific_strategies)
+
+@app.route('/chats/delete/<int:chat_idx>', methods=['GET'])
+@login_required
+def delete_chat(chat_idx):
+    config = load_config()
+    if 'chats' in config and 0 <= chat_idx < len(config['chats']):
+        deleted_chat = config['chats'].pop(chat_idx)
+        
+        if 'checkin_tasks' in config:
+            config['checkin_tasks'] = [
+                task for task in config['checkin_tasks']
+                if task.get('target_chat_id') != deleted_chat.get('chat_id')
+            ]
+        
+        save_config(config)
+        update_scheduler()
+        flash(f"群组 '{deleted_chat.get('chat_title')}' 已删除。", 'success')
+        logger.info(f"群组 '{deleted_chat.get('chat_title')}' (ID: {deleted_chat.get('chat_id')}) 已删除。")
+    else:
+        flash('无效的群组索引，删除失败。', 'danger')
+    return redirect(url_for('chats'))
 
 @app.route('/api/bots/add', methods=['POST'])
 def api_add_bot():
@@ -587,43 +677,58 @@ def tasks_page():
     config = load_config()
 
     processed_bots_data = get_processed_bots_list(config.get('bots', []))
+    configured_chats_data = config.get('chats', [])
 
     logged_in_users = [u for u in config.get('users', []) if u.get('status') == 'logged_in' and u.get('telegram_id')]
+    
     valid_tasks = []
+    user_map_by_id = {user['telegram_id']: user for user in config.get('users', []) if 'telegram_id' in user}
+    bot_strategy_map = {b['bot_username']: b.get('strategy', 'start_button_alert') for b in processed_bots_data}
+    chat_strategy_map = {c['chat_id']: c.get('strategy_identifier', 'send_custom_message') for c in configured_chats_data}
+
+    for task_data in config.get('checkin_tasks', []):
+        user_for_task = user_map_by_id.get(task_data.get('user_telegram_id'))
+        if user_for_task:
+            task_data['display_nickname'] = user_for_task.get('nickname', f"TGID: {task_data['user_telegram_id']}")
+        else:
+            task_data['display_nickname'] = f"未知用户 (TGID: {task_data.get('user_telegram_id')})"
+
+        if task_data.get('bot_username'):
+            task_data['target_type'] = 'bot'
+            task_data['target_name'] = task_data['bot_username']
+            task_data['strategy_used'] = bot_strategy_map.get(task_data['bot_username'], 'start_button_alert')
+        elif task_data.get('target_chat_id'):
+            task_data['target_type'] = 'chat'
+            chat_info = next((c for c in configured_chats_data if c.get('chat_id') == task_data['target_chat_id']), None)
+            task_data['target_name'] = chat_info.get('chat_title', str(task_data['target_chat_id'])) if chat_info else str(task_data['target_chat_id'])
+            task_data['strategy_used'] = chat_strategy_map.get(task_data['target_chat_id'], 'send_custom_message')
+            task_data['message_content_display'] = task_data.get('message_content', '')
+
+        task_data['strategy_display_name'] = get_strategy_display_name(task_data.get('strategy_used'))
+        valid_tasks.append(task_data)
     
-    bot_strategy_map = {b['bot_username']: b['strategy'] for b in processed_bots_data}
-    bot_strategy_display_map = {b['bot_username']: b['strategy_display_name'] for b in processed_bots_data}
+    all_strategy_display_names_for_tasks = {
+        key: info.get("name", key) if isinstance(info, dict) else info
+        for key, info in STRATEGY_DISPLAY_NAMES.items()
+    }
 
-    if 'checkin_tasks' in config:
-        all_users_list = config.get('users', [])
-        user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
-
-        for task_data in config.get('checkin_tasks', []):
-            if 'strategy' in task_data:
-                del task_data['strategy'] 
-
-            if 'user_telegram_id' in task_data and 'bot_username' in task_data:
-                user_for_task = user_map_by_id.get(task_data['user_telegram_id'])
-                if user_for_task:
-                    task_data['display_nickname'] = user_for_task.get('nickname', f"TGID: {task_data['user_telegram_id']}")
-                else:
-                    task_data['display_nickname'] = f"未知用户 (TGID: {task_data['user_telegram_id']})"
-                
-                task_data['bot_strategy'] = bot_strategy_map.get(task_data['bot_username'], 'start_button_alert')
-                task_data['bot_strategy_display_name'] = bot_strategy_display_map.get(task_data['bot_username'], task_data['bot_strategy'])
-                valid_tasks.append(task_data)
-    
-    return render_template('tasks.html', tasks=valid_tasks, users=logged_in_users, bots=processed_bots_data)
+    return render_template('tasks.html', 
+                           tasks=valid_tasks, 
+                           users=logged_in_users, 
+                           bots=processed_bots_data,
+                           chats=configured_chats_data, 
+                           strategy_display_names=all_strategy_display_names_for_tasks,
+                           app_config=config)
 
 
 @app.route('/api/tasks/add', methods=['POST'])
 def api_add_task():
     config = load_config()
     user_telegram_id_str = request.form.get('user_telegram_id')
-    bot_username = request.form.get('bot_username')
-
-    if not user_telegram_id_str or not bot_username:
-        return jsonify({"success": False, "message": "未选择用户或机器人。"}), 400
+    target_type = request.form.get('target_type')
+    
+    if not user_telegram_id_str or not target_type:
+        return jsonify({"success": False, "message": "未选择用户或目标类型。"}), 400
     
     try:
         user_telegram_id = int(user_telegram_id_str)
@@ -634,41 +739,73 @@ def api_add_task():
     if not user_for_task:
         return jsonify({"success": False, "message": "选择的用户无效、未登录或缺少TG ID。"}), 400
     
-    user_nickname_for_log = user_for_task.get('nickname', f"TGID_{user_telegram_id}")
+    user_nickname = user_for_task.get('nickname', f"TGID_{user_telegram_id}")
 
     new_task = {
-        "user_telegram_id": user_telegram_id, 
-        "bot_username": bot_username,
+        "user_telegram_id": user_telegram_id,
         "last_auto_checkin_status": None,
         "last_auto_checkin_time": None,
         "last_scheduled_date": None
     }
+
+    if target_type == 'bot':
+        bot_username = request.form.get('bot_username')
+        if not bot_username:
+            return jsonify({"success": False, "message": "未选择机器人。"}), 400
+        new_task["bot_username"] = bot_username
+        log_target_name = bot_username
+    elif target_type == 'chat':
+        target_chat_id_str = request.form.get('target_chat_id')
+        message_content = request.form.get('message_content', '')
+
+        if not target_chat_id_str:
+            return jsonify({"success": False, "message": "未选择群组。"}), 400
+        try:
+            target_chat_id = int(target_chat_id_str)
+        except ValueError:
+            return jsonify({"success": False, "message": "无效的群组ID格式。"}), 400
+        
+        chat_info = next((c for c in config.get('chats', []) if c.get('chat_id') == target_chat_id), None)
+        if not chat_info:
+            return jsonify({"success": False, "message": "选择的群组未在配置中找到。"}), 400
+
+        new_task["target_chat_id"] = target_chat_id
+        new_task["message_content"] = message_content
+        log_target_name = chat_info.get('chat_title', str(target_chat_id))
+    else:
+        return jsonify({"success": False, "message": "无效的目标类型。"}), 400
     
     if 'checkin_tasks' not in config or not isinstance(config['checkin_tasks'], list):
         config['checkin_tasks'] = []
 
-    task_exists = any(
-        t.get('user_telegram_id') == new_task['user_telegram_id'] and t.get('bot_username') == new_task['bot_username']
-        for t in config['checkin_tasks']
-    )
-
+    task_exists = False
+    for t in config['checkin_tasks']:
+        if t.get('user_telegram_id') == new_task['user_telegram_id']:
+            if target_type == 'bot' and t.get('bot_username') == new_task.get('bot_username'):
+                task_exists = True
+                break
+            if target_type == 'chat' and t.get('target_chat_id') == new_task.get('target_chat_id'):
+                task_exists = True 
+                break
+    
     if not task_exists:
         config['checkin_tasks'].append(new_task)
         save_config(config)
         update_scheduler() 
-        logger.info(f"签到任务已添加: 用户 {user_nickname_for_log} (TGID: {user_telegram_id}) -> 机器人 {bot_username}")
-        return jsonify({"success": True, "message": "签到任务已添加。"})
+        logger.info(f"任务已添加: 用户 {user_nickname} (TGID: {user_telegram_id}) -> {target_type.upper()} {log_target_name}")
+        return jsonify({"success": True, "message": "任务已添加。"})
     else:
-        return jsonify({"success": False, "message": "该签到任务已存在。"}), 400
+        return jsonify({"success": False, "message": "该任务已存在。"}), 400
 
 @app.route('/api/tasks/delete', methods=['POST'])
 def api_delete_task():
     config = load_config()
     user_telegram_id_str = request.form.get('user_telegram_id')
-    bot_username = request.form.get('bot_username')
+    target_type = request.form.get('target_type')
+    identifier = request.form.get('identifier')
 
-    if not user_telegram_id_str or not bot_username:
-        return jsonify({"success": False, "message": "未提供用户TG ID或机器人名称。"}), 400
+    if not user_telegram_id_str or not target_type or not identifier:
+        return jsonify({"success": False, "message": "缺少必要参数。"}), 400
 
     try:
         user_telegram_id = int(user_telegram_id_str)
@@ -679,25 +816,92 @@ def api_delete_task():
         config['checkin_tasks'] = []
     
     user_for_log = next((u for u in config.get('users', []) if u.get('telegram_id') == user_telegram_id), None)
-    log_identifier = user_for_log.get('nickname') if user_for_log else f"TGID_{user_telegram_id}"
+    log_identifier_user = user_for_log.get('nickname') if user_for_log else f"TGID_{user_telegram_id}"
+    log_target_name = identifier
 
     original_task_count = len(config['checkin_tasks'])
     
-    config['checkin_tasks'] = [
-        t for t in config['checkin_tasks']
-        if not (t.get('user_telegram_id') == user_telegram_id and t.get('bot_username') == bot_username)
-    ]
+    tasks_to_keep = []
+    for t in config['checkin_tasks']:
+        keep_task = True
+        if t.get('user_telegram_id') == user_telegram_id:
+            if target_type == 'bot' and t.get('bot_username') == identifier:
+                keep_task = False
+            elif target_type == 'chat':
+                try:
+                    chat_id_to_check = int(identifier)
+                    if t.get('target_chat_id') == chat_id_to_check:
+                        keep_task = False
+                except ValueError:
+                    pass
+        if keep_task:
+            tasks_to_keep.append(t)
+            
+    config['checkin_tasks'] = tasks_to_keep
 
     if len(config['checkin_tasks']) < original_task_count:
         save_config(config)
         update_scheduler()
-        logger.info(f"签到任务已删除: 用户 {log_identifier} (TGID: {user_telegram_id}) -> 机器人 {bot_username}")
-        return jsonify({"success": True, "message": "签到任务已删除。"})
+        logger.info(f"任务已删除: 用户 {log_identifier_user} (TGID: {user_telegram_id}) -> {target_type.upper()} {log_target_name}")
+        return jsonify({"success": True, "message": "任务已删除。"})
     else:
-        return jsonify({"success": False, "message": "未找到该签到任务。"}), 404
+        return jsonify({"success": False, "message": "未找到该任务。"}), 404
+
+async def execute_telegram_action_wrapper(api_id, api_hash, user_nickname, session_name, target_config_item, task_specific_config):
+    from telegram_client import _connect_and_authorize_client
+    
+    client = None
+    result = {"success": False, "message": "操作未启动。"}
+    
+    target_entity_identifier = None
+    if 'bot_username' in target_config_item:
+        target_entity_identifier = target_config_item['bot_username']
+        effective_strategy_id = task_specific_config.get('strategy_identifier') or target_config_item.get('strategy')
+    elif 'chat_id' in target_config_item:
+        target_entity_identifier = target_config_item['chat_id']
+        effective_strategy_id = task_specific_config.get('strategy_identifier') or target_config_item.get('strategy_identifier')
+    else:
+        return {"success": False, "message": "无效的目标配置项。"}
+
+    if not effective_strategy_id:
+        return {"success": False, "message": "未能确定操作策略。"}
+
+    StrategyClass = get_strategy_class(effective_strategy_id)
+    if not StrategyClass:
+        return {"success": False, "message": f"未知的策略: {effective_strategy_id}"}
+
+    try:
+        client = await _connect_and_authorize_client(api_id, api_hash, session_name, user_nickname)
+        target_entity = await client.get_entity(target_entity_identifier)
+        
+        strategy_instance = StrategyClass(client, target_entity, logger, user_nickname, task_config=task_specific_config)
+        
+        if hasattr(strategy_instance, 'execute') and callable(getattr(strategy_instance, 'execute')):
+            result = await strategy_instance.execute()
+        else:
+            logger.error(f"用户 {user_nickname}: 策略 {effective_strategy_id} 没有 'execute' 方法。")
+            result = {"success": False, "message": f"策略 {effective_strategy_id} 无法执行。"}
+
+    except errors.UserDeactivatedBanError as e:
+        logger.error(f"用户 {user_nickname}: 会话 {session_name} 未授权或账户问题: {e}")
+        result.update({"success": False, "message": str(e)})
+    except ConnectionError as ce:
+        logger.error(f"用户 {user_nickname}: 连接Telegram时发生 ConnectionError: {ce}")
+        result.update({"success": False, "message": f"连接错误: {ce}"})
+    except ValueError as ve:
+        logger.error(f"用户 {user_nickname}: 无法找到实体 {target_entity_identifier}: {ve}")
+        result.update({"success": False, "message": f"无法找到目标实体: {target_entity_identifier}。"})
+    except Exception as e_general:
+        logger.error(f"用户 {user_nickname}: 执行操作时发生未知错误: {type(e_general).__name__} - {e_general}", exc_info=True)
+        result.update({"success": False, "message": f"执行操作时发生未知错误: {type(e_general).__name__} - {e_general}"})
+    finally:
+        if client and client.is_connected():
+            await client.disconnect()
+    return result
+
 
 @app.route('/api/checkin/manual', methods=['POST'])
-async def api_manual_checkin():
+async def api_manual_action():
     config = load_config()
     api_id = config.get('api_id')
     api_hash = config.get('api_hash')
@@ -706,10 +910,14 @@ async def api_manual_checkin():
         return jsonify({"success": False, "message": "请先设置API ID和API Hash。"}), 400
 
     user_telegram_id_str = request.form.get('user_telegram_id') 
-    bot_username = request.form.get('bot_username')
+    target_type = request.form.get('target_type')
+    identifier = request.form.get('identifier')
+    message_content_manual = request.form.get('message_content_manual', None)
+    task_strategy_manual = request.form.get('task_strategy_manual', None)
 
-    if not user_telegram_id_str or not bot_username: 
-        return jsonify({"success": False, "message": "未选择用户或机器人。"}), 400
+
+    if not user_telegram_id_str or not target_type or not identifier: 
+        return jsonify({"success": False, "message": "未选择用户、目标类型或目标标识符。"}), 400
     
     try:
         user_telegram_id = int(user_telegram_id_str)
@@ -721,29 +929,45 @@ async def api_manual_checkin():
         return jsonify({"success": False, "message": f"用户TG ID '{user_telegram_id}' 未找到或未登录。"}), 400
 
     session_name = user_config.get('session_name')
-    user_nickname_for_operation = user_config.get('nickname', f"TGID_{user_telegram_id}")
-    bots_list = config.get('bots', [])
-    bot_config = next((b for b in bots_list if isinstance(b, dict) and b.get('bot_username') == bot_username), None)
+    user_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}")
     
-    strategy_identifier = "start_button_alert"
-    if bot_config:
-        strategy_identifier = bot_config.get('strategy', "start_button_alert")
-    else:
-        return jsonify({"success": False, "message": f"机器人 '{bot_username}' 未在配置中找到。"}), 400
+    target_config_item = None
+    log_target_display_name = identifier
+    task_for_manual_action = {"user_telegram_id": user_telegram_id}
 
-    from checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
-    if strategy_identifier not in STRATEGY_MAPPING:
-        logger.warning(f"手动签到: 机器人 {bot_username} 配置了无效策略 '{strategy_identifier}'，将使用默认策略 'start_button_alert'。")
-        strategy_identifier = "start_button_alert"
-        
-    strategy_display = get_strategy_display_name(strategy_identifier)
+    if target_type == 'bot':
+        target_config_item = next((b for b in config.get('bots', []) if isinstance(b, dict) and b.get('bot_username') == identifier), None)
+        if target_config_item:
+            task_for_manual_action['bot_username'] = identifier
+            if task_strategy_manual: task_for_manual_action['strategy_identifier'] = task_strategy_manual
+    elif target_type == 'chat':
+        try:
+            chat_id_int = int(identifier)
+            target_config_item = next((c for c in config.get('chats', []) if isinstance(c, dict) and c.get('chat_id') == chat_id_int), None)
+            if target_config_item:
+                task_for_manual_action['target_chat_id'] = chat_id_int
+                log_target_display_name = target_config_item.get('chat_title', identifier)
+                if message_content_manual is not None:
+                    task_for_manual_action['message_content'] = message_content_manual
+                if task_strategy_manual: task_for_manual_action['strategy_identifier'] = task_strategy_manual
+        except ValueError:
+             return jsonify({"success": False, "message": "群组ID必须是数字。"}), 400
+    
+    if not target_config_item:
+        return jsonify({"success": False, "message": f"目标 '{identifier}' 未在配置中找到。"}), 400
 
-    result = await telethon_check_in(api_id, api_hash, user_nickname_for_operation, session_name, bot_username, strategy_identifier)
+    effective_strategy_id = task_for_manual_action.get('strategy_identifier') or \
+                            target_config_item.get('strategy') or \
+                            target_config_item.get('strategy_identifier', '未知')
+    strategy_display = get_strategy_display_name(effective_strategy_id)
+    
+    result = await execute_telegram_action_wrapper(api_id, api_hash, user_nickname, session_name, target_config_item, task_for_manual_action)
 
     log_entry = {
-        "checkin_type": f"手动签到 ({strategy_display})",
-        "user_nickname": user_nickname_for_operation, 
-        "bot_username": bot_username,
+        "checkin_type": f"手动操作 ({strategy_display})",
+        "user_nickname": user_nickname, 
+        "target_type": target_type,
+        "target_name": log_target_display_name,
         "success": result.get("success"),
         "message": result.get("message")
     }
@@ -751,78 +975,75 @@ async def api_manual_checkin():
 
     return jsonify(result)
 
-async def api_checkin_all_tasks_internal(source="http_manual_all"):
+async def api_execute_all_tasks_internal(source="http_manual_all"):
     config = load_config()
     api_id = config.get('api_id')
     api_hash = config.get('api_hash')
 
     if not api_id or not api_hash:
         message = "请先设置API ID和API Hash。"
-        if source.startswith("http"):
-            return jsonify({"success": False, "message": message}), 400
-        else:
-            logger.warning(f"内部调用签到所有任务失败: {message}")
-            return {"success": False, "message": message, "all_tasks_results": []}
+        if source.startswith("http"): return jsonify({"success": False, "message": message}), 400
+        else: logger.warning(f"内部调用所有任务失败: {message}"); return {"success": False, "message": message, "all_tasks_results": []}
+
     tasks_to_run = config.get('checkin_tasks', [])
     if not tasks_to_run:
-        message = "没有配置签到任务。"
-        if source.startswith("http"):
-            return jsonify({"success": True, "message": message, "all_tasks_results": []}), 200
-        else:
-            logger.info(f"内部调用签到所有任务: {message}")
-            return {"success": True, "message": message, "all_tasks_results": []}
+        message = "没有配置任务。"
+        if source.startswith("http"): return jsonify({"success": True, "message": message, "all_tasks_results": []}), 200
+        else: logger.info(f"内部调用所有任务: {message}"); return {"success": True, "message": message, "all_tasks_results": []}
+
 
     results_list = []
-    all_users_list = config.get('users', [])
-    user_map_by_id = {user['telegram_id']: user for user in all_users_list if 'telegram_id' in user}
-
-    processed_bots = get_processed_bots_list(config.get('bots', []))
-    bot_strategy_map_all = {bot['bot_username']: bot['strategy'] for bot in processed_bots if bot.get('bot_username')}
+    user_map_by_id = {user['telegram_id']: user for user in config.get('users', []) if 'telegram_id' in user}
+    bot_map_by_username = {bot['bot_username']: bot for bot in config.get('bots', []) if 'bot_username' in bot}
+    chat_map_by_id = {chat['chat_id']: chat for chat in config.get('chats', []) if 'chat_id' in chat}
 
     for task_config_entry in tasks_to_run:
-        bot_username = task_config_entry.get('bot_username')
         user_telegram_id = task_config_entry.get('user_telegram_id')
+        user_config = user_map_by_id.get(user_telegram_id)
+        user_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}") if user_config else f"TGID_{user_telegram_id}_(未知用户)"
 
-        user_config = None
-        log_nickname = "未知用户"
+        target_config_item = None
+        target_type = "未知目标"
+        log_target_name = "未知"
 
-        if user_telegram_id:
-            user_config = user_map_by_id.get(user_telegram_id)
-            if user_config:
-                log_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}")
-            else: 
-                log_nickname = f"TGID_{user_telegram_id} (用户数据不存在)"
+        if task_config_entry.get('bot_username'):
+            target_config_item = bot_map_by_username.get(task_config_entry['bot_username'])
+            target_type = "bot"
+            log_target_name = task_config_entry['bot_username']
+        elif task_config_entry.get('target_chat_id'):
+            target_config_item = chat_map_by_id.get(task_config_entry['target_chat_id'])
+            target_type = "chat"
+            log_target_name = target_config_item.get('chat_title', str(task_config_entry['target_chat_id'])) if target_config_item else str(task_config_entry['target_chat_id'])
         
-        if not bot_username or not user_telegram_id:
-            logger.warning(f"跳过格式不正确的任务 (缺少TGID或机器人名): {task_config_entry}")
-            continue
-
-        current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录、配置不正确或用户数据不存在。"}
-        
-        if user_config and user_config.get('status') == 'logged_in':
+        if not user_config or user_config.get('status') != 'logged_in':
+            current_task_result = {"success": False, "message": f"用户 {user_nickname} 未登录或配置不正确。"}
+        elif not target_config_item:
+            current_task_result = {"success": False, "message": f"目标 {log_target_name} ({target_type}) 未在配置中找到。"}
+        else:
             session_name = user_config.get('session_name')
-            strategy_identifier = bot_strategy_map_all.get(bot_username, "start_button_alert")
-            strategy_display = STRATEGY_DISPLAY_NAMES.get(strategy_identifier, strategy_identifier)
-            try:
-                current_task_result = await telethon_check_in(api_id, api_hash, log_nickname, session_name, bot_username, strategy_identifier)
-            except Exception as e_checkin:
-                logger.error(f"执行全部签到任务中，用户 {log_nickname}->{bot_username} (策略: {strategy_display}) 时发生异常: {e_checkin}")
-                current_task_result = {"success": False, "message": f"签到时发生内部错误: {str(e_checkin)}"}
-        elif user_config: 
-             current_task_result = {"success": False, "message": f"用户 {log_nickname} 未登录。"}
+            current_task_result = await execute_telegram_action_wrapper(api_id, api_hash, user_nickname, session_name, target_config_item, task_config_entry)
 
-        results_list.append({"task": {"user_nickname": log_nickname, "bot_username": bot_username, "strategy_used": strategy_identifier}, "result": current_task_result})
+        eff_strat_id = task_config_entry.get('strategy_identifier') or \
+                       target_config_item.get('strategy') if target_config_item and 'strategy' in target_config_item else \
+                       target_config_item.get('strategy_identifier') if target_config_item and 'strategy_identifier' in target_config_item else "未知"
+        strategy_display = get_strategy_display_name(eff_strat_id)
+
+        results_list.append({
+            "task": {"user_nickname": user_nickname, "target_type": target_type, "target_name": log_target_name, "strategy_used_display": strategy_display}, 
+            "result": current_task_result
+        })
     
         log_entry = {
-            "checkin_type": f"手动批量签到 ({strategy_display})",
-            "user_nickname": log_nickname, 
-            "bot_username": bot_username,
+            "checkin_type": f"批量手动操作 ({strategy_display})",
+            "user_nickname": user_nickname, 
+            "target_type": target_type,
+            "target_name": log_target_name,
             "success": current_task_result.get("success"),
             "message": current_task_result.get("message")
         }
         save_daily_checkin_log(log_entry)
         
-        task_config_entry["last_auto_checkin_status"] = "成功" if current_task_result.get("success") else "失败: " + current_task_result.get("message", "")[:50]
+        task_config_entry["last_auto_checkin_status"] = "成功" if current_task_result.get("success") else f"失败: {current_task_result.get('message', '')[:100]}"
         task_config_entry["last_auto_checkin_time"] = format_datetime_filter(None)
 
     save_config(config)
@@ -833,9 +1054,10 @@ async def api_checkin_all_tasks_internal(source="http_manual_all"):
     else:
         return final_response
 
-@app.route('/api/checkin/all', methods=['POST'])
-async def api_checkin_all_tasks():
-    return await api_checkin_all_tasks_internal(source="http_manual_all")
+@app.route('/api/tasks/execute_all', methods=['POST'])
+async def api_execute_all_tasks_http():
+    return await api_execute_all_tasks_internal(source="http_manual_all")
+
 
 if __name__ == '__main__':
     logger.info("启动Flask应用...")
