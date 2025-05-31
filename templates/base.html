@@ -39,6 +39,9 @@
                     <a class="nav-link {% if request.endpoint == 'bots_page' %}active{% endif %}" href="{{ url_for('bots_page') }}">机器人管理</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint == 'chats' %}active{% endif %}" href="{{ url_for('chats') }}">群组管理</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link {% if request.endpoint == 'tasks_page' %}active{% endif %}" href="{{ url_for('tasks_page') }}">签到任务管理</a>
                 </li>
             </ul>

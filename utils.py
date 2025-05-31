@@ -41,7 +41,11 @@ def get_processed_bots_list(raw_bots_list):
                 current_strategy = "start_button_alert"
             
             bot_dict["strategy"] = current_strategy
-            bot_dict["strategy_display_name"] = STRATEGY_DISPLAY_NAMES.get(current_strategy, current_strategy)
+            strategy_info = STRATEGY_DISPLAY_NAMES.get(current_strategy)
+            if isinstance(strategy_info, dict):
+                bot_dict["strategy_display_name"] = strategy_info.get("name", current_strategy)
+            else:
+                bot_dict["strategy_display_name"] = current_strategy
             processed_bots.append(bot_dict)
         else:
             logger.warning(f"处理过程中跳过无效或格式错误的机器人: {bot_entry}")

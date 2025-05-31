@@ -162,12 +162,13 @@ $(document).ready(function() {
         $('#manual-checkin-result-area').html('<p class="text-info">正在尝试签到...</p>');
 
         $.ajax({
-            url: "{{ url_for('api_manual_checkin') }}",
+            url: "{{ url_for('api_manual_action') }}",
             type: 'POST',
             data: { 
                 user_telegram_id: userTelegramId, 
-                bot_username: botUsername,
-                strategy: strategy
+                identifier: botUsername, 
+                target_type: 'bot',
+                task_strategy_manual: strategy
             },
             dataType: 'json',
             success: function(response) {

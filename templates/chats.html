@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}管理群组{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>管理Telegram群组</h2>
+    <hr>
+
+    <h3>添加新群组</h3>
+    <form method="POST" action="{{ url_for('chats') }}" class="mb-4">
+        <div class="form-group">
+            <label for="chat_identifier">群组标识符 (用户名、邀请链接或ID):</label>
+            <input type="text" class="form-control" id="chat_identifier" name="chat_identifier" required>
+            <small class="form-text text-muted">例如: @mygroupusername, https://t.me/joinchat/ABCXYZ, 或 -1001234567890</small>
+        </div>
+        <div class="form-group">
+            <label for="user_nickname">使用哪个用户账户解析此群组:</label>
+            <select class="form-control" id="user_nickname" name="user_nickname" required>
+                {% for user in users %}
+                    <option value="{{ user.nickname }}">{{ user.nickname }} (ID: {{ user.telegram_id }})</option>
+                {% endfor %}
+            </select>
+            <small class="form-text text-muted">选定的用户账户必须是该群组的成员。</small>
+        </div>
+        <div class="form-group">
+            <label for="strategy_identifier">默认交互策略:</label>
+            <select class="form-control" id="strategy_identifier" name="strategy_identifier" required>
+                {% for sid, sname in strategy_display_names.items() %}
+                    <option value="{{ sid }}" {% if sid == 'send_custom_message' %}selected{% endif %}>{{ sname }}</option>
+                {% endfor %}
+            </select>
+        </div>
+         <div class="form-group">
+            <label for="custom_chat_title">自定义群组标题 (可选):</label>
+            <input type="text" class="form-control" id="custom_chat_title" name="custom_chat_title">
+            <small class="form-text text-muted">如果留空，将使用Telegram返回的群组名称。</small>
+        </div>
+        <button type="submit" class="btn btn-primary">添加群组</button>
+    </form>
+
+    <h3>已配置群组</h3>
+    {% if config_chats %}
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>序号</th>
+                    <th>群组标题</th>
+                    <th>群组ID</th>
+                    <th>默认策略</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for chat in config_chats %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ chat.chat_title }}</td>
+                        <td>{{ chat.chat_id }}</td>
+                        <td>{{ strategy_display_names.get(chat.strategy_identifier, chat.strategy_identifier) }}</td>
+                        <td>
+                            <a href="{{ url_for('delete_chat', chat_idx=loop.index0) }}" class="btn btn-danger btn-sm" onclick="return confirm('确定要删除这个群组吗？');">删除</a>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>尚未配置任何群组。</p>
+    {% endif %}
+</div>
+{% endblock %}

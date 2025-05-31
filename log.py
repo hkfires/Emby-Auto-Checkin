@@ -18,7 +18,8 @@ def init_log_db():
                     timestamp TEXT NOT NULL,
                     checkin_type TEXT,
                     user_nickname TEXT,
-                    bot_username TEXT,
+                    target_type TEXT,
+                    target_name TEXT,
                     success INTEGER,
                     message TEXT
                 )
@@ -44,7 +45,7 @@ def load_checkin_log_by_date(target_date_str):
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT timestamp, checkin_type, user_nickname, bot_username, success, message 
+                SELECT timestamp, checkin_type, user_nickname, target_type, target_name, success, message 
                 FROM checkin_records 
                 WHERE timestamp >= ? AND timestamp <= ?
                 ORDER BY timestamp DESC
@@ -70,17 +71,18 @@ def save_daily_checkin_log(log_entry):
             success_int = 1 if log_entry.get("success", False) else 0
 
             cursor.execute('''
-                INSERT INTO checkin_records (timestamp, checkin_type, user_nickname, bot_username, success, message)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO checkin_records (timestamp, checkin_type, user_nickname, target_type, target_name, success, message)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (
                 timestamp,
                 log_entry.get("checkin_type"),
                 log_entry.get("user_nickname"),
-                log_entry.get("bot_username"),
+                log_entry.get("target_type"),
+                log_entry.get("target_name"),
                 success_int,
                 log_entry.get("message")
             ))
             conn.commit()
-            logger.info(f"签到日志已保存到 {DB_FILE}: 用户 {log_entry.get('user_nickname')}, 机器人 {log_entry.get('bot_username')}")
+            logger.info(f"签到日志已保存到 {DB_FILE}: 用户 {log_entry.get('user_nickname')}, 类型 {log_entry.get('target_type')}, 目标 {log_entry.get('target_name')}")
     except sqlite3.Error as e:
         logger.error(f"保存每日签到日志到 {DB_FILE} 时出错: {e}")
