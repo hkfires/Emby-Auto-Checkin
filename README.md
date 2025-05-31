@@ -3,7 +3,7 @@
 ## 目前适配Emby
 
 *   HKA Emby
-*   Beebi（比比）
+*   ~~Beebi（比比）~~
 *   YounoEmby
 *   69云机场
 
