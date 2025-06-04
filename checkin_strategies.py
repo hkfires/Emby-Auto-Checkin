@@ -79,9 +79,9 @@ class CheckinStrategy:
         """
         await self.send_command(command_to_send)
         
+        lock = asyncio.Lock()
         action_taken_event = asyncio.Event()
         result_holder = {"value": (None, None, None)}
-
 
         async def temp_handler(event):
             if event.chat_id != self.target_entity.id:
@@ -90,18 +90,23 @@ class CheckinStrategy:
             if event.sender_id != self.target_entity.id:
                  return
 
-            if action_taken_event.is_set():
-                self.logger.debug(f"用户 {self.nickname_for_logging}: (_execute_initial_step) action_taken_event 已设置，忽略消息。")
-                return
+            async with lock:
+                if action_taken_event.is_set():
+                    self.logger.debug(f"用户 {self.nickname_for_logging}: (_execute_initial_step) action_taken_event 已被设置 (在锁内检查)，忽略消息 ID {event.message.id if event.message else 'N/A'}。")
+                    return
 
-            self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 收到来自机器人 {event.sender_id} 的消息 (ID: {event.message.id})，尝试寻找按钮 {initial_button_keywords}")
-            message_obj = event.message
-            click_obj = await self._click_button_in_message(message_obj, initial_button_keywords, is_answer_logic=False)
-            
-            result_holder["value"] = (click_obj, message_obj, None)
-            if not action_taken_event.is_set():
-                action_taken_event.set()
+                self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 处理消息 ID {event.message.id if event.message else 'N/A'} (持有锁)，尝试寻找按钮 {initial_button_keywords}")
+                message_obj = event.message
+                click_obj = await self._click_button_in_message(message_obj, initial_button_keywords, is_answer_logic=False)
+                
+                result_holder["value"] = (click_obj, message_obj, None)
+                action_taken_event.set() 
 
+                if click_obj and not isinstance(click_obj, Exception):
+                    self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 导致按钮点击。结果已记录，事件已设置。")
+                else:
+                    self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 未导致按钮点击 (或点击失败)。结果已记录，事件已设置。")
+        
         handler_new_msg = self.client.add_event_handler(temp_handler, events.NewMessage(chats=self.target_entity.id, from_users=self.target_entity.id))
         handler_edit_msg = self.client.add_event_handler(temp_handler, events.MessageEdited(chats=self.target_entity.id, from_users=self.target_entity.id))
         
@@ -254,9 +259,9 @@ class MathCaptchaStrategy(CheckinStrategy):
         self.timeout_seconds = task_config.get("timeout", 30) 
 
     def _solve_math_problem(self, problem_text):
-        self.logger.info(f"用户 {self.nickname_for_logging}: 尝试解析数学问题: '{problem_text}'")
         match = re.search(r'(\d+)\s*([+\-*\/])\s*(\d+)\s*=\s*\?', problem_text)
         if match:
+            self.logger.info(f"用户 {self.nickname_for_logging}: 尝试解析数学问题 (匹配部分): '{match.group(0).strip()}'")
             num1, operator, num2 = match.groups()
             num1, num2 = int(num1), int(num2)
             self.logger.info(f"用户 {self.nickname_for_logging}: 解析到数字1: {num1}, 运算符: {operator}, 数字2: {num2}")
