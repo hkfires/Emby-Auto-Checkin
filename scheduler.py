@@ -135,7 +135,7 @@ def update_scheduler():
         name='Daily Rescheduler for Checkin Tasks',
         replace_existing=True
     )
-    logger.info("已设置每日任务时间重调度作业 (00:01 Asia/Shanghai)。")
+    logger.info("已设置每日任务时间重调度作业 (01:00 Asia/Shanghai)。")
 
     if config.get('scheduler_enabled'):
         scheduler_time_slots = config.get('scheduler_time_slots', [])
