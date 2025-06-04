@@ -130,7 +130,7 @@ def update_scheduler():
         logger.info("已移除旧的每日重调度作业。")
     scheduler.add_job(
         update_scheduler,
-        trigger=CronTrigger(hour=0, minute=1, timezone='Asia/Shanghai'),
+        trigger=CronTrigger(hour=1, minute=0, timezone='Asia/Shanghai'),
         id=rescheduler_job_id,
         name='Daily Rescheduler for Checkin Tasks',
         replace_existing=True
