@@ -1,5 +1,5 @@
 import asyncio, re
-from telethon import events
+from telethon import events, errors
 
 class CheckinStrategy:
     def __init__(self, client, target_entity, logger, nickname_for_logging, task_config=None):
