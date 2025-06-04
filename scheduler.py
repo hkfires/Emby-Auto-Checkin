@@ -1,11 +1,10 @@
 import asyncio
 import logging
 import random
-from datetime import date
+from datetime import date, datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from config import load_config, save_config
-from telegram_client import telethon_check_in
 from log import save_daily_checkin_log
 
 logger = logging.getLogger(__name__)
@@ -104,7 +103,6 @@ def run_scheduled_task_sync_wrapper(user_telegram_id, target_type, target_identi
                 save_config(config)
                 break
 
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -140,18 +138,14 @@ def update_scheduler():
     logger.info("已设置每日任务时间重调度作业 (00:01 Asia/Shanghai)。")
 
     if config.get('scheduler_enabled'):
-        start_h = config.get('scheduler_range_start_hour', 8)
-        start_m = config.get('scheduler_range_start_minute', 0)
-        end_h = config.get('scheduler_range_end_hour', 22)
-        end_m = config.get('scheduler_range_end_minute', 0)
-
-        if not (0 <= start_h <= 23 and 0 <= start_m <= 59 and \
-                0 <= end_h <= 23 and 0 <= end_m <= 59 and \
-                (start_h * 60 + start_m < end_h * 60 + end_m)):
-            logger.error(f"无效的调度时间范围: {start_h}:{start_m} - {end_h}:{end_m}. 自动签到将不会为任务创建调度。")
+        scheduler_time_slots = config.get('scheduler_time_slots', [])
+        if not scheduler_time_slots:
+            logger.error("调度器已启用，但未配置任何时间段 (scheduler_time_slots 为空)。自动签到将不会为任务创建调度。")
             return
-
-        logger.info(f"自动签到已启用。时间范围: {start_h:02d}:{start_m:02d} - {end_h:02d}:{end_m:02d}")
+        
+        for slot in scheduler_time_slots:
+            slot_name = slot.get('name', f"ID {slot.get('id')}")
+            logger.info(f"可用调度时间段: {slot_name} ({slot.get('start_hour',0):02d}:{slot.get('start_minute',0):02d} - {slot.get('end_hour',23):02d}:{slot.get('end_minute',59):02d})")
 
         all_users = config.get('users', [])
         user_map_by_id = {user['telegram_id']: user for user in all_users if 'telegram_id' in user}
@@ -206,22 +200,54 @@ def update_scheduler():
             task_scheduled_m = task_entry.get('scheduled_minute')
             current_h, current_m = -1, -1
 
+            selected_slot_id = task_entry.get('selected_time_slot_id')
+            task_specific_time_slot = None
+            if selected_slot_id is not None:
+                task_specific_time_slot = next((s for s in scheduler_time_slots if s.get('id') == selected_slot_id), None)
+
+            if not task_specific_time_slot:
+                if scheduler_time_slots: 
+                    task_specific_time_slot = scheduler_time_slots[0]
+                    logger.warning(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 的 selected_time_slot_id '{selected_slot_id}' 无效或未设置。将使用第一个可用时间段: ID {task_specific_time_slot.get('id')}")
+                else:
+                    logger.error(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 无法找到有效的时间段，且全局时间段列表为空。跳过此任务的调度。")
+                    continue
+            
+            slot_start_h = task_specific_time_slot.get('start_hour', 8)
+            slot_start_m = task_specific_time_slot.get('start_minute', 0)
+            slot_end_h = task_specific_time_slot.get('end_hour', 22)
+            slot_end_m = task_specific_time_slot.get('end_minute', 0)
+            slot_name_for_log = task_specific_time_slot.get('name', f"ID {task_specific_time_slot.get('id')}")
+
+            if not (0 <= slot_start_h <= 23 and 0 <= slot_start_m <= 59 and \
+                    0 <= slot_end_h <= 23 and 0 <= slot_end_m <= 59 and \
+                    (slot_start_h * 60 + slot_start_m < slot_end_h * 60 + slot_end_m)):
+                logger.error(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 使用的时间段 '{slot_name_for_log}' ({slot_start_h:02d}:{slot_start_m:02d} - {slot_end_h:02d}:{slot_end_m:02d}) 无效。跳过此任务的调度。")
+                continue
+
             if task_last_scheduled_date == today_str and \
                isinstance(task_scheduled_h, int) and isinstance(task_scheduled_m, int) and \
                0 <= task_scheduled_h <= 23 and 0 <= task_scheduled_m <= 59:
-                current_h, current_m = task_scheduled_h, task_scheduled_m
-                logger.info(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 今天已被安排在 {current_h:02d}:{current_m:02d}，将使用此时间。")
-            else:
-                rand_h, rand_m = get_random_time_in_range(start_h, start_m, end_h, end_m)
+                saved_total_minutes = task_scheduled_h * 60 + task_scheduled_m
+                slot_start_total_minutes = slot_start_h * 60 + slot_start_m
+                slot_end_total_minutes = slot_end_h * 60 + slot_end_m
+                if slot_start_total_minutes <= saved_total_minutes < slot_end_total_minutes:
+                    current_h, current_m = task_scheduled_h, task_scheduled_m
+                    logger.info(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 今天已被安排在 {current_h:02d}:{current_m:02d} (在时段 '{slot_name_for_log}' 内)，将使用此时间。")
+                else:
+                    logger.info(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 今天已安排的时间 {task_scheduled_h:02d}:{task_scheduled_m:02d} 不在当前所选时段 '{slot_name_for_log}' ({slot_start_h:02d}:{slot_start_m:02d}-{slot_end_h:02d}:{slot_end_m:02d}) 内。将重新生成随机时间。")
+            
+            if current_h == -1 and current_m == -1:
+                rand_h, rand_m = get_random_time_in_range(slot_start_h, slot_start_m, slot_end_h, slot_end_m)
                 if rand_h is None: 
-                    logger.warning(f"无法为任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 计算随机时间，因时间范围无效。")
+                    logger.warning(f"无法为任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 在时段 '{slot_name_for_log}' 内计算随机时间，因时间范围无效。")
                     continue
                 current_h, current_m = rand_h, rand_m
                 task_entry['last_scheduled_date'] = today_str
                 task_entry['scheduled_hour'] = current_h
                 task_entry['scheduled_minute'] = current_m
                 config_changed = True
-                logger.info(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 今天首次安排，随机时间: {current_h:02d}:{current_m:02d}。")
+                logger.info(f"任务 {job_id} (用户: {current_task_user_nickname}, 目标: {display_target_name}) 今天首次安排 (或重新安排) 在时段 '{slot_name_for_log}' 内，随机时间: {current_h:02d}:{current_m:02d}。")
             
             try:
                 scheduler.add_job(

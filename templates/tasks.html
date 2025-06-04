@@ -30,6 +30,20 @@
             </select>
         </div>
 
+        <div class="form-group">
+            <label for="selected_time_slot_id">选择执行时间段:</label>
+            <select class="form-control" id="selected_time_slot_id" name="selected_time_slot_id" required>
+                <option value="">-- 选择一个时间段 --</option>
+                {% if scheduler_time_slots %}
+                    {% for slot in scheduler_time_slots %}
+                        <option value="{{ slot.id }}">{{ slot.name }} ({{ '%02d:%02d'|format(slot.start_hour, slot.start_minute) }} - {{ '%02d:%02d'|format(slot.end_hour, slot.end_minute) }})</option>
+                    {% endfor %}
+                {% else %}
+                    <option value="" disabled>未配置任何时间段，请先在调度器设置中配置</option>
+                {% endif %}
+            </select>
+        </div>
+
         <div id="bot_target_group" class="form-group">
             <label for="bot_username">选择机器人:</label>
             <select class="form-control" id="bot_username" name="bot_username">
@@ -66,6 +80,7 @@
                     <th>目标名称</th>
                     <th>使用策略</th>
                     <th>消息内容</th>
+                    <th>执行时段</th>
                     <th>操作</th>
                 </tr>
             </thead>
@@ -77,6 +92,7 @@
                         <td>{{ task.target_name }}</td>
                         <td>{{ task.strategy_display_name | default('N/A') }}</td>
                         <td>{{ task.message_content_display if task.target_type == 'chat' else 'N/A' }}</td>
+                        <td>{{ task.selected_time_slot_name | default('未分配/默认') }}</td>
                         <td class="action-buttons">
                             <button class="btn btn-info btn-sm" 
                                 data-user-id="{{ task.user_telegram_id }}"

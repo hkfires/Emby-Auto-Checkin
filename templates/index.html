@@ -38,10 +38,22 @@
     </div>
 </div>
 
-{% if config.scheduler_enabled and display_date_label == '今日' %}
-    <p>自动签到任务已启用。各任务将在 {{ "%02d:%02d"|format(config.scheduler_range_start_hour, config.scheduler_range_start_minute) }} - {{ "%02d:%02d"|format(config.scheduler_range_end_hour, config.scheduler_range_end_minute) }} (北京时间) 范围内随机执行。</p>
-{% elif display_date_label == '今日' %}
-    <p>自动签到任务当前已禁用。您可以前往“自动签到设置”页面启用并配置。</p>
+{% if display_date_label == '今日' %}
+    {% if config.scheduler_enabled %}
+        {% if config.scheduler_time_slots and config.scheduler_time_slots|length > 0 %}
+            <p>自动签到任务已启用。各任务将根据其选择的时间段在配置的时间范围内随机执行。</p>
+            <p class="mb-1">已配置的时间段包括 (北京时间)：</p>
+            <ul>
+            {% for slot in config.scheduler_time_slots %}
+                <li>{{ slot.name }}: {{ "%02d:%02d"|format(slot.start_hour, slot.start_minute) }} - {{ "%02d:%02d"|format(slot.end_hour, slot.end_minute) }}</li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p>自动签到任务已启用，但尚未配置任何有效的时间段。请前往“<a href="{{ url_for('scheduler_settings_page') }}">自动签到设置</a>”页面进行配置。</p>
+        {% endif %}
+    {% else %}
+        <p>自动签到任务当前已禁用。您可以前往“<a href="{{ url_for('scheduler_settings_page') }}">自动签到设置</a>”页面启用并配置。</p>
+    {% endif %}
 {% endif %}
 
 <div id="checkin-log-area" style="margin-top: 20px;">
@@ -72,7 +84,6 @@
         <p>{{ display_date_label }}尚无签到记录。</p>
     {% endif %}
 </div>
-
 
 {% endblock %}
 
