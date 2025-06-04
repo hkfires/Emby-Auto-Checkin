@@ -3,9 +3,10 @@
 ## 目前适配Emby
 
 *   HKA Emby
-*   ~~Beebi（比比）~~
+*   Beebi（比比）
 *   YounoEmby
 *   69云机场
+*   STAR EMBY
 
 ## 使用 Docker 部署
 
