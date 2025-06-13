@@ -4,3 +4,4 @@ apscheduler
 Flask-Login
 Werkzeug
 gunicorn
+SQLAlchemy

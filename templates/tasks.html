@@ -260,18 +260,13 @@
         })
         .then(response => response.json())
         .then(data => {
-            let messageSummary = `所有任务执行完毕。<br>`;
-            if (data.all_tasks_results && data.all_tasks_results.length > 0) {
-                data.all_tasks_results.forEach(item => {
-                    messageSummary += `用户 ${item.task.user_nickname} -> ${item.task.target_type} ${item.task.target_name} (${item.task.strategy_used_display}): ${item.result.success ? '成功' : '失败'} - ${item.result.message}<br>`;
-                });
+            if (data.success) {
+                window.location.reload();
             } else {
-                messageSummary += "没有任务被执行。";
+                showAlert(data.message || '发生未知错误。', 'danger');
+                buttonElement.innerHTML = originalButtonText;
+                buttonElement.disabled = false;
             }
-            showAlert(messageSummary, 'info');
-            buttonElement.innerHTML = originalButtonText;
-            buttonElement.disabled = false;
-            setTimeout(() => window.location.reload(), 7000); 
         })
         .catch(error => {
             showAlert('执行全部任务时发生网络错误: ' + error, 'danger');

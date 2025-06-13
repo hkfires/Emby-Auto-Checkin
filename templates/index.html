@@ -24,11 +24,6 @@
     </div>
 </div>
 
-<div id="checkin-results-area" style="margin-top: 20px;">
-    <h4>签到结果:</h4>
-    <pre id="checkin-results-pre" style="background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 15px; max-height: 400px; overflow-y: auto;"></pre>
-</div>
-
 <hr class="my-4">
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2 class="mb-0">{{ display_date_label }}签到日志</h2>
@@ -127,33 +122,18 @@ $(document).ready(function() {
 
     $('#checkinAllBtn').on('click', function() {
         $(this).prop('disabled', true).text('正在执行...');
-        $('#checkin-results-pre').text('开始执行所有签到任务...');
         $.ajax({
             url: "{{ url_for('api_execute_all_tasks_http') }}",
             type: 'POST',
             dataType: 'json',
             success: function(response) {
-                let resultsText = "所有任务执行完毕。\n\n";
-                if (response.all_tasks_results && response.all_tasks_results.length > 0) {
-                    response.all_tasks_results.forEach(function(item, index) {
-                        resultsText += `任务 ${index + 1}: 用户 ${item.task.user_nickname} -> ${item.task.target_type === 'bot' ? '机器人' : (item.task.target_type === 'chat' ? '群组' : item.task.target_type)} ${item.task.target_name}\n`;
-                        resultsText += `  状态: ${item.result.success ? '成功' : '失败'}\n`;
-                        resultsText += `  消息: ${item.result.message}\n\n`;
-                    });
-                } else if (response.message) {
-                     resultsText += `消息: ${response.message}\n`;
-                } else {
-                    resultsText += "没有任务被执行或未收到明确结果。\n";
-                }
-                $('#checkin-results-pre').text(resultsText);
-                showAlert('所有签到任务已尝试执行。请查看下方结果。', 'info');
+                window.location.reload();
             },
             error: function(xhr) {
                 let errorMsg = '执行所有签到任务失败。';
                 if (xhr.responseJSON && xhr.responseJSON.message) {
                     errorMsg = xhr.responseJSON.message;
                 }
-                $('#checkin-results-pre').text(errorMsg);
                 showAlert(errorMsg, 'danger');
             },
             complete: function() {
