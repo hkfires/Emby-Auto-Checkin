@@ -7,30 +7,49 @@
 <form method="POST" action="{{ url_for('scheduler_settings_page') }}">
     <div class="form-group form-check">
         <input type="checkbox" class="form-check-input" id="scheduler_enabled" name="scheduler_enabled" {% if scheduler_enabled %}checked{% endif %}>
-        <label class="form-check-label" for="scheduler_enabled">启用每日自动签到 (各任务在指定范围内随机时间执行)</label>
+        <label class="form-check-label" for="scheduler_enabled">启用每日自动签到</label>
     </div>
-    <p class="text-muted"><small>启用后，每个签到任务将在下方设定的时间范围内，独立随机选择一个时间点执行。系统会在每日凌晨自动为任务重新分配新的随机时间。</small></p>
+    <p class="text-muted"><small>启用后，每个签到任务将根据其选择的时间段，在该时间段内独立随机选择一个时间点执行。系统会在每日凌晨自动为任务重新分配新的随机时间（如果任务当天未执行过）。</small></p>
     
-    <h5>签到时间范围 (北京时间)</h5>
-    <div class="form-row">
-        <div class="form-group col-md-3">
-            <label for="scheduler_range_start_hour">开始小时 (0-23)</label>
-            <input type="number" class="form-control" id="scheduler_range_start_hour" name="scheduler_range_start_hour" value="{{ scheduler_range_start_hour if scheduler_range_start_hour is not none else '8' }}" min="0" max="23" required>
+    <h5>签到时间段 (最多3个, 北京时间)</h5>
+    <p class="text-muted"><small>定义不同的时间段，例如 "上午", "下午", "晚上"。每个任务可以单独选择在哪个时间段内执行。如果某个时间段的名称留空，则该时间段及其设置将被忽略或删除。</small></p>
+
+    {% set max_slots = 3 %}
+    {% for i in range(1, max_slots + 1) %}
+    {% set slot = scheduler_time_slots[loop.index0] if scheduler_time_slots and loop.index0 < scheduler_time_slots|length else {} %}
+    <div class="card mb-3">
+        <div class="card-header">
+            时间段 {{ i }}
         </div>
-        <div class="form-group col-md-3">
-            <label for="scheduler_range_start_minute">开始分钟 (0-59)</label>
-            <input type="number" class="form-control" id="scheduler_range_start_minute" name="scheduler_range_start_minute" value="{{ scheduler_range_start_minute if scheduler_range_start_minute is not none else '0' }}" min="0" max="59" required>
-        </div>
-        <div class="form-group col-md-3">
-            <label for="scheduler_range_end_hour">结束小时 (0-23)</label>
-            <input type="number" class="form-control" id="scheduler_range_end_hour" name="scheduler_range_end_hour" value="{{ scheduler_range_end_hour if scheduler_range_end_hour is not none else '22' }}" min="0" max="23" required>
-        </div>
-        <div class="form-group col-md-3">
-            <label for="scheduler_range_end_minute">结束分钟 (0-59)</label>
-            <input type="number" class="form-control" id="scheduler_range_end_minute" name="scheduler_range_end_minute" value="{{ scheduler_range_end_minute if scheduler_range_end_minute is not none else '0' }}" min="0" max="59" required>
+        <div class="card-body">
+            <div class="form-row">
+                <div class="form-group col-md-12">
+                    <label for="slot_{{ i }}_name">时间段名称 (例如: 上午, 下午)</label>
+                    <input type="text" class="form-control" id="slot_{{ i }}_name" name="slot_{{ i }}_name" value="{{ slot.name | default('') }}" placeholder="例如: 上午签到">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group col-md-3">
+                    <label for="slot_{{ i }}_start_hour">开始小时 (0-23)</label>
+                    <input type="number" class="form-control" id="slot_{{ i }}_start_hour" name="slot_{{ i }}_start_hour" value="{{ slot.start_hour if slot.start_hour is not none else '8' }}" min="0" max="23">
+                </div>
+                <div class="form-group col-md-3">
+                    <label for="slot_{{ i }}_start_minute">开始分钟 (0-59)</label>
+                    <input type="number" class="form-control" id="slot_{{ i }}_start_minute" name="slot_{{ i }}_start_minute" value="{{ slot.start_minute if slot.start_minute is not none else '0' }}" min="0" max="59">
+                </div>
+                <div class="form-group col-md-3">
+                    <label for="slot_{{ i }}_end_hour">结束小时 (0-23)</label>
+                    <input type="number" class="form-control" id="slot_{{ i }}_end_hour" name="slot_{{ i }}_end_hour" value="{{ slot.end_hour if slot.end_hour is not none else '12' }}" min="0" max="23">
+                </div>
+                <div class="form-group col-md-3">
+                    <label for="slot_{{ i }}_end_minute">结束分钟 (0-59)</label>
+                    <input type="number" class="form-control" id="slot_{{ i }}_end_minute" name="slot_{{ i }}_end_minute" value="{{ slot.end_minute if slot.end_minute is not none else '0' }}" min="0" max="59">
+                </div>
+            </div>
+            <p class="text-muted"><small>请确保结束时间晚于开始时间。如果此时间段名称留空，则此时间段的设置将被忽略。</small></p>
         </div>
     </div>
-     <p class="text-muted"><small>请确保结束时间晚于开始时间，且都在同一天内。</small></p>
+    {% endfor %}
 
     <button type="submit" class="btn btn-primary mt-3">保存自动签到设置</button>
 </form>

@@ -1,15 +1,18 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
-import logging, os, re
+import logging, os, re, threading, asyncio
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from telethon import TelegramClient, errors
 from datetime import date, datetime
 from config import load_config, save_config
-from telegram_client import telethon_check_in, get_session_name, resolve_chat_identifier, send_message_to_chat_id
+from telegram_client import get_session_name, resolve_chat_identifier
 from log import save_daily_checkin_log, init_log_db, load_checkin_log_by_date
-from scheduler import update_scheduler
+from apscheduler.triggers.cron import CronTrigger
+from scheduler_instance import scheduler
+from actions import execute_telegram_action_wrapper
+from run_scheduler import get_random_time_in_range
 from utils import format_datetime_filter, get_masked_api_credentials, get_processed_bots_list, update_api_credential
-from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES, get_strategy_display_name, get_strategy_class
+from checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -18,11 +21,15 @@ DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+config = load_config()
+if 'secret_key' not in config or not config['secret_key']:
+    config['secret_key'] = os.urandom(24).hex()
+    save_config(config)
+    logger.info("Generated and saved a new secret key.")
+app.secret_key = bytes.fromhex(config['secret_key'])
 
 with app.app_context():
     init_log_db()
-    update_scheduler()
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -191,7 +198,6 @@ def index():
 
 app.jinja_env.filters['format_datetime'] = format_datetime_filter
 
-
 @app.route('/settings/api', methods=['GET', 'POST'])
 @login_required
 def api_settings_page():
@@ -222,59 +228,68 @@ def scheduler_settings_page():
     config = load_config()
     if request.method == 'POST':
         form_data = request.form.to_dict()
-        render_context = {
-            'scheduler_enabled': config.get('scheduler_enabled'),
-            'scheduler_range_start_hour': config.get('scheduler_range_start_hour'),
-            'scheduler_range_start_minute': config.get('scheduler_range_start_minute'),
-            'scheduler_range_end_hour': config.get('scheduler_range_end_hour'),
-            'scheduler_range_end_minute': config.get('scheduler_range_end_minute'),
-        }
-        render_context.update({
-            'scheduler_enabled': True if form_data.get('scheduler_enabled') == 'on' else False,
-            'scheduler_range_start_hour': form_data.get('scheduler_range_start_hour'),
-            'scheduler_range_start_minute': form_data.get('scheduler_range_start_minute'),
-            'scheduler_range_end_hour': form_data.get('scheduler_range_end_hour'),
-            'scheduler_range_end_minute': form_data.get('scheduler_range_end_minute'),
-        })
+        
+        new_scheduler_time_slots = []
+        for i in range(1, 4):
+            slot_name = form_data.get(f'slot_{i}_name')
+            if not slot_name or not slot_name.strip():
+                if any(form_data.get(f'slot_{i}_{field}') for field in ['start_hour', 'start_minute', 'end_hour', 'end_minute']):
+                    flash(f"时间段 {i} 的名称不能为空，如果不想使用该时段，请清空所有相关字段。", "warning")
+                    return render_template('scheduler_settings.html',
+                                           scheduler_enabled=config.get('scheduler_enabled'),
+                                           scheduler_time_slots=config.get('scheduler_time_slots', []))
+                continue
 
-        try:
-            s_start_h = int(form_data.get('scheduler_range_start_hour', config.get('scheduler_range_start_hour')))
-            s_start_m = int(form_data.get('scheduler_range_start_minute', config.get('scheduler_range_start_minute')))
-            s_end_h = int(form_data.get('scheduler_range_end_hour', config.get('scheduler_range_end_hour')))
-            s_end_m = int(form_data.get('scheduler_range_end_minute', config.get('scheduler_range_end_minute')))
+            try:
+                start_hour = int(form_data.get(f'slot_{i}_start_hour'))
+                start_minute = int(form_data.get(f'slot_{i}_start_minute'))
+                end_hour = int(form_data.get(f'slot_{i}_end_hour'))
+                end_minute = int(form_data.get(f'slot_{i}_end_minute'))
 
-            if not (0 <= s_start_h <= 23 and 0 <= s_start_m <= 59 and \
-                    0 <= s_end_h <= 23 and 0 <= s_end_m <= 59):
-                flash("时间值超出有效范围 (小时 0-23, 分钟 0-59)。请重新输入。", "danger")
-                return render_template('scheduler_settings.html', **render_context)
+                if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and \
+                        0 <= end_hour <= 23 and 0 <= end_minute <= 59):
+                    flash(f"时间段 {i} ('{slot_name}') 的时间值超出有效范围 (小时 0-23, 分钟 0-59)。", "danger")
+                    return render_template('scheduler_settings.html',
+                                           scheduler_enabled=config.get('scheduler_enabled'),
+                                           scheduler_time_slots=config.get('scheduler_time_slots', []))
 
-            start_total_minutes = s_start_h * 60 + s_start_m
-            end_total_minutes = s_end_h * 60 + s_end_m
-            if start_total_minutes >= end_total_minutes:
-                flash("调度结束时间必须晚于开始时间。请重新输入。", "danger")
-                return render_template('scheduler_settings.html', **render_context)
+                if start_hour * 60 + start_minute >= end_hour * 60 + end_minute:
+                    flash(f"时间段 {i} ('{slot_name}') 的结束时间必须晚于开始时间。", "danger")
+                    return render_template('scheduler_settings.html',
+                                           scheduler_enabled=config.get('scheduler_enabled'),
+                                           scheduler_time_slots=config.get('scheduler_time_slots', []))
+                
+                new_scheduler_time_slots.append({
+                    "id": len(new_scheduler_time_slots) + 1,
+                    "name": slot_name.strip(),
+                    "start_hour": start_hour,
+                    "start_minute": start_minute,
+                    "end_hour": end_hour,
+                    "end_minute": end_minute
+                })
+            except (ValueError, TypeError):
+                flash(f"时间段 {i} ('{slot_name}') 的时间格式无效。请输入有效的数字。", "danger")
+                return render_template('scheduler_settings.html',
+                                       scheduler_enabled=config.get('scheduler_enabled'),
+                                       scheduler_time_slots=config.get('scheduler_time_slots', []))
+        
+        if not new_scheduler_time_slots and form_data.get('scheduler_enabled') == 'on':
+            flash("调度器已启用，但未配置任何有效的时间段。请至少配置一个时间段。", "warning")
+            return render_template('scheduler_settings.html',
+                                   scheduler_enabled=True,
+                                   scheduler_time_slots=[])
 
-            validated_scheduler_settings = {
-                'scheduler_enabled': True if form_data.get('scheduler_enabled') == 'on' else False,
-                'scheduler_range_start_hour': s_start_h,
-                'scheduler_range_start_minute': s_start_m,
-                'scheduler_range_end_hour': s_end_h,
-                'scheduler_range_end_minute': s_end_m,
-            }
-            config.update(validated_scheduler_settings)
-            save_config(config)
-            update_scheduler()
-            flash("自动签到设置已成功保存。", "success")
-        except (ValueError, TypeError):
-            flash("调度时间范围格式无效。请输入有效的数字。", "danger")
-            return render_template('scheduler_settings.html', **render_context)
+        config['scheduler_enabled'] = True if form_data.get('scheduler_enabled') == 'on' else False
+        config['scheduler_time_slots'] = new_scheduler_time_slots
+        
+        save_config(config)
+
+        flash("自动签到设置已成功保存。更改将在每日重调度（凌晨1点）或重启调度器服务后生效。", "warning")
+        config = load_config()
 
     return render_template('scheduler_settings.html',
                            scheduler_enabled=config.get('scheduler_enabled'),
-                           scheduler_range_start_hour=config.get('scheduler_range_start_hour'),
-                           scheduler_range_start_minute=config.get('scheduler_range_start_minute'),
-                           scheduler_range_end_hour=config.get('scheduler_range_end_hour'),
-                           scheduler_range_end_minute=config.get('scheduler_range_end_minute'))
+                           scheduler_time_slots=config.get('scheduler_time_slots', []))
 
 @app.route('/users', methods=['GET'])
 @login_required
@@ -505,8 +520,12 @@ def api_delete_user():
 
     if len(config.get('users', [])) < original_user_count:
         save_config(config)
-        update_scheduler()
-        logger.info(f"用户 {nickname_to_delete} 已删除，并更新了调度器。")
+        if user_telegram_id_to_delete:
+            for job in scheduler.get_jobs():
+                if job.id and job.id.startswith(f"checkin_job_{user_telegram_id_to_delete}_"):
+                    scheduler.remove_job(job.id)
+                    logger.info(f"已从调度器中移除任务: {job.id}")
+        logger.info(f"用户 {nickname_to_delete} 已删除。")
         return jsonify({"success": True, "message": f"用户 {nickname_to_delete} 已删除。"})
     else:
         return jsonify({"success": False, "message": "删除用户时发生错误或用户未找到。"}), 404
@@ -528,7 +547,6 @@ def bots_page():
     processed_bots = get_processed_bots_list(raw_bots_list)
 
     return render_template('bots.html', bots=processed_bots, users=config.get('users', []), available_strategies=available_strategies_for_template)
-
 
 @app.route('/chats', methods=['GET', 'POST'])
 @login_required
@@ -585,7 +603,6 @@ async def chats():
                         flash(f"添加群组失败: {resolved_data.get('message', '未知错误')}", 'danger')
                         logger.error(f"解析群组 '{chat_identifier}' 失败: {resolved_data.get('message')}")
         return redirect(url_for('chats'))
-
     
     chat_specific_strategies = {}
     for key, strategy_info in STRATEGY_DISPLAY_NAMES.items():
@@ -611,7 +628,12 @@ def delete_chat(chat_idx):
             ]
         
         save_config(config)
-        update_scheduler()
+        deleted_chat_id = deleted_chat.get('chat_id')
+        if deleted_chat_id:
+            for job in scheduler.get_jobs():
+                if job.id and job.id.endswith(f"_chat_{deleted_chat_id}"):
+                    scheduler.remove_job(job.id)
+                    logger.info(f"已从调度器中移除任务: {job.id}")
         flash(f"群组 '{deleted_chat.get('chat_title')}' 已删除。", 'success')
         logger.info(f"群组 '{deleted_chat.get('chat_title')}' (ID: {deleted_chat.get('chat_id')}) 已删除。")
     else:
@@ -665,8 +687,11 @@ def api_delete_bot():
         if 'checkin_tasks' in config:
             config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t.get('bot_username') != bot_to_delete_username]
         save_config(config)
-        update_scheduler()
-        logger.info(f"机器人 {bot_to_delete_username} 已删除，并更新了调度器。")
+        for job in scheduler.get_jobs():
+            if job.id and job.id.endswith(f"_bot_{bot_to_delete_username}"):
+                scheduler.remove_job(job.id)
+                logger.info(f"已从调度器中移除任务: {job.id}")
+        logger.info(f"机器人 {bot_to_delete_username} 已删除。")
         return jsonify({"success": True, "message": "机器人已删除。"})
     else:
         return jsonify({"success": False, "message": "未找到该机器人。"}), 404
@@ -685,6 +710,8 @@ def tasks_page():
     user_map_by_id = {user['telegram_id']: user for user in config.get('users', []) if 'telegram_id' in user}
     bot_strategy_map = {b['bot_username']: b.get('strategy', 'start_button_alert') for b in processed_bots_data}
     chat_strategy_map = {c['chat_id']: c.get('strategy_identifier', 'send_custom_message') for c in configured_chats_data}
+    
+    scheduler_time_slots_map = {slot['id']: slot for slot in config.get('scheduler_time_slots', []) if isinstance(slot, dict) and 'id' in slot}
 
     for task_data in config.get('checkin_tasks', []):
         user_for_task = user_map_by_id.get(task_data.get('user_telegram_id'))
@@ -705,6 +732,19 @@ def tasks_page():
             task_data['message_content_display'] = task_data.get('message_content', '')
 
         task_data['strategy_display_name'] = get_strategy_display_name(task_data.get('strategy_used'))
+        
+        selected_slot_id = task_data.get('selected_time_slot_id')
+        selected_slot_info = scheduler_time_slots_map.get(selected_slot_id)
+        if selected_slot_info:
+            task_data['selected_time_slot_name'] = selected_slot_info.get('name', f"时段ID: {selected_slot_id}")
+        else:
+            first_slot = next(iter(scheduler_time_slots_map.values()), None)
+            if first_slot:
+                 task_data['selected_time_slot_name'] = f"默认为: {first_slot.get('name', f'时段ID: {first_slot.get_id}')} (原ID {selected_slot_id} 无效)"
+                 task_data['selected_time_slot_id'] = first_slot.get('id')
+            else:
+                 task_data['selected_time_slot_name'] = "未分配或时段无效"
+
         valid_tasks.append(task_data)
     
     all_strategy_display_names_for_tasks = {
@@ -718,14 +758,15 @@ def tasks_page():
                            bots=processed_bots_data,
                            chats=configured_chats_data, 
                            strategy_display_names=all_strategy_display_names_for_tasks,
+                           scheduler_time_slots=config.get('scheduler_time_slots', []),
                            app_config=config)
-
 
 @app.route('/api/tasks/add', methods=['POST'])
 def api_add_task():
     config = load_config()
     user_telegram_id_str = request.form.get('user_telegram_id')
     target_type = request.form.get('target_type')
+    selected_time_slot_id_str = request.form.get('selected_time_slot_id')
     
     if not user_telegram_id_str or not target_type:
         return jsonify({"success": False, "message": "未选择用户或目标类型。"}), 400
@@ -743,10 +784,31 @@ def api_add_task():
 
     new_task = {
         "user_telegram_id": user_telegram_id,
-        "last_auto_checkin_status": None,
-        "last_auto_checkin_time": None,
-        "last_scheduled_date": None
+        "selected_time_slot_id": None
     }
+
+    if selected_time_slot_id_str:
+        try:
+            selected_time_slot_id = int(selected_time_slot_id_str)
+            available_slot_ids = [s['id'] for s in config.get('scheduler_time_slots', []) if isinstance(s, dict) and 'id' in s]
+            if selected_time_slot_id in available_slot_ids:
+                new_task["selected_time_slot_id"] = selected_time_slot_id
+            else:
+                flash_msg = f"选择的时间段ID '{selected_time_slot_id_str}' 无效。"
+                logger.warning(flash_msg)
+                if available_slot_ids:
+                    new_task["selected_time_slot_id"] = available_slot_ids[0]
+                    flash_msg += f" 已自动分配到第一个可用时段 (ID: {available_slot_ids[0]})。"
+                else:
+                     return jsonify({"success": False, "message": "无法分配任务到时间段：系统中未配置任何时间段。"}), 400
+        except ValueError:
+            return jsonify({"success": False, "message": "时间段ID格式无效。"}), 400
+    else:
+        available_slots = config.get('scheduler_time_slots', [])
+        if available_slots and isinstance(available_slots[0], dict) and 'id' in available_slots[0]:
+            new_task["selected_time_slot_id"] = available_slots[0]['id']
+        else:
+            return jsonify({"success": False, "message": "无法分配任务到时间段：系统中未配置任何时间段。"}), 400
 
     if target_type == 'bot':
         bot_username = request.form.get('bot_username')
@@ -791,9 +853,39 @@ def api_add_task():
     if not task_exists:
         config['checkin_tasks'].append(new_task)
         save_config(config)
-        update_scheduler() 
-        logger.info(f"任务已添加: 用户 {user_nickname} (TGID: {user_telegram_id}) -> {target_type.upper()} {log_target_name}")
-        return jsonify({"success": True, "message": "任务已添加。"})
+        try:
+            scheduler_time_slots = config.get('scheduler_time_slots', [])
+            selected_slot_id = new_task.get('selected_time_slot_id')
+            task_specific_time_slot = next((s for s in scheduler_time_slots if s.get('id') == selected_slot_id), scheduler_time_slots if scheduler_time_slots else None)
+
+            if task_specific_time_slot:
+                slot_start_h = task_specific_time_slot.get('start_hour', 8)
+                slot_start_m = task_specific_time_slot.get('start_minute', 0)
+                slot_end_h = task_specific_time_slot.get('end_hour', 22)
+                slot_end_m = task_specific_time_slot.get('end_minute', 0)
+                rand_h, rand_m = get_random_time_in_range(slot_start_h, slot_start_m, slot_end_h, slot_end_m)
+
+                target_identifier = new_task.get('bot_username') or new_task.get('target_chat_id')
+                job_id_suffix = f"bot_{target_identifier}" if target_type == 'bot' else f"chat_{target_identifier}"
+                job_id = f"checkin_job_{user_telegram_id}_{job_id_suffix}"
+
+                scheduler.add_job(
+                    'run_scheduler:run_checkin_task',
+                    trigger=CronTrigger(hour=rand_h, minute=rand_m),
+                    args=[user_telegram_id, target_type, target_identifier, new_task],
+                    id=job_id,
+                    name=f"Task: {user_nickname} -> {log_target_name}",
+                    replace_existing=True
+                )
+                logger.info(f"任务已添加并调度: 用户 {user_nickname} -> {log_target_name} at {rand_h:02d}:{rand_m:02d}")
+                return jsonify({"success": True, "message": "任务已添加并成功调度。"})
+            else:
+                logger.error(f"无法为新任务 {log_target_name} 找到调度时间段。")
+                return jsonify({"success": True, "message": "任务已添加，但无法调度（未配置时间段）。它将在下次调度器重载时尝试调度。"})
+
+        except Exception as e:
+            logger.error(f"添加任务到调度器时出错: {e}", exc_info=True)
+            return jsonify({"success": True, "message": "任务已添加，但调度失败。请检查调度器服务状态。"})
     else:
         return jsonify({"success": False, "message": "该任务已存在。"}), 400
 
@@ -841,64 +933,21 @@ def api_delete_task():
 
     if len(config['checkin_tasks']) < original_task_count:
         save_config(config)
-        update_scheduler()
-        logger.info(f"任务已删除: 用户 {log_identifier_user} (TGID: {user_telegram_id}) -> {target_type.upper()} {log_target_name}")
+        try:
+            job_id_suffix = f"bot_{identifier}" if target_type == 'bot' else f"chat_{identifier}"
+            job_id = f"checkin_job_{user_telegram_id}_{job_id_suffix}"
+            if scheduler.get_job(job_id):
+                scheduler.remove_job(job_id)
+                logger.info(f"已从调度器中移除任务: {job_id}")
+            else:
+                logger.warning(f"尝试删除任务 {job_id}，但在调度器中未找到。")
+        except Exception as e:
+            logger.error(f"从调度器删除任务 {job_id} 时出错: {e}", exc_info=True)
+
+        logger.info(f"任务已删除: 用户 {log_identifier_user} -> {target_type.upper()} {log_target_name}")
         return jsonify({"success": True, "message": "任务已删除。"})
     else:
         return jsonify({"success": False, "message": "未找到该任务。"}), 404
-
-async def execute_telegram_action_wrapper(api_id, api_hash, user_nickname, session_name, target_config_item, task_specific_config):
-    from telegram_client import _connect_and_authorize_client
-    
-    client = None
-    result = {"success": False, "message": "操作未启动。"}
-    
-    target_entity_identifier = None
-    if 'bot_username' in target_config_item:
-        target_entity_identifier = target_config_item['bot_username']
-        effective_strategy_id = task_specific_config.get('strategy_identifier') or target_config_item.get('strategy')
-    elif 'chat_id' in target_config_item:
-        target_entity_identifier = target_config_item['chat_id']
-        effective_strategy_id = task_specific_config.get('strategy_identifier') or target_config_item.get('strategy_identifier')
-    else:
-        return {"success": False, "message": "无效的目标配置项。"}
-
-    if not effective_strategy_id:
-        return {"success": False, "message": "未能确定操作策略。"}
-
-    StrategyClass = get_strategy_class(effective_strategy_id)
-    if not StrategyClass:
-        return {"success": False, "message": f"未知的策略: {effective_strategy_id}"}
-
-    try:
-        client = await _connect_and_authorize_client(api_id, api_hash, session_name, user_nickname)
-        target_entity = await client.get_entity(target_entity_identifier)
-        
-        strategy_instance = StrategyClass(client, target_entity, logger, user_nickname, task_config=task_specific_config)
-        
-        if hasattr(strategy_instance, 'execute') and callable(getattr(strategy_instance, 'execute')):
-            result = await strategy_instance.execute()
-        else:
-            logger.error(f"用户 {user_nickname}: 策略 {effective_strategy_id} 没有 'execute' 方法。")
-            result = {"success": False, "message": f"策略 {effective_strategy_id} 无法执行。"}
-
-    except errors.UserDeactivatedBanError as e:
-        logger.error(f"用户 {user_nickname}: 会话 {session_name} 未授权或账户问题: {e}")
-        result.update({"success": False, "message": str(e)})
-    except ConnectionError as ce:
-        logger.error(f"用户 {user_nickname}: 连接Telegram时发生 ConnectionError: {ce}")
-        result.update({"success": False, "message": f"连接错误: {ce}"})
-    except ValueError as ve:
-        logger.error(f"用户 {user_nickname}: 无法找到实体 {target_entity_identifier}: {ve}")
-        result.update({"success": False, "message": f"无法找到目标实体: {target_entity_identifier}。"})
-    except Exception as e_general:
-        logger.error(f"用户 {user_nickname}: 执行操作时发生未知错误: {type(e_general).__name__} - {e_general}", exc_info=True)
-        result.update({"success": False, "message": f"执行操作时发生未知错误: {type(e_general).__name__} - {e_general}"})
-    finally:
-        if client and client.is_connected():
-            await client.disconnect()
-    return result
-
 
 @app.route('/api/checkin/manual', methods=['POST'])
 async def api_manual_action():
@@ -975,6 +1024,19 @@ async def api_manual_action():
 
     return jsonify(result)
 
+def run_async_tasks_in_background(app):
+    with app.app_context():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        logger.info("后台线程：开始执行所有任务...")
+        try:
+            loop.run_until_complete(api_execute_all_tasks_internal(source="background_thread"))
+            logger.info("后台线程：所有任务执行完毕。")
+        except Exception as e:
+            logger.error(f"后台线程执行任务时发生错误: {e}", exc_info=True)
+        finally:
+            loop.close()
+
 async def api_execute_all_tasks_internal(source="http_manual_all"):
     config = load_config()
     api_id = config.get('api_id')
@@ -1043,11 +1105,6 @@ async def api_execute_all_tasks_internal(source="http_manual_all"):
         }
         save_daily_checkin_log(log_entry)
         
-        task_config_entry["last_auto_checkin_status"] = "成功" if current_task_result.get("success") else f"失败: {current_task_result.get('message', '')[:100]}"
-        task_config_entry["last_auto_checkin_time"] = format_datetime_filter(None)
-
-    save_config(config)
-
     final_response = {"all_tasks_results": results_list, "message": "所有任务执行完毕。"}
     if source.startswith("http"):
         return jsonify(final_response)
@@ -1055,9 +1112,11 @@ async def api_execute_all_tasks_internal(source="http_manual_all"):
         return final_response
 
 @app.route('/api/tasks/execute_all', methods=['POST'])
-async def api_execute_all_tasks_http():
-    return await api_execute_all_tasks_internal(source="http_manual_all")
-
+def api_execute_all_tasks_http():
+    thread = threading.Thread(target=run_async_tasks_in_background, args=(app,))
+    thread.start()
+    flash("所有任务已在后台启动。请稍后在日志中查看结果。", "info")
+    return jsonify({"success": True})
 
 if __name__ == '__main__':
     logger.info("启动Flask应用...")
