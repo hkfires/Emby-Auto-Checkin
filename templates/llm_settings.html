@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}LLM API 设置{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>LLM API 设置</h2>
+    <p>在这里配置用于图片识别的LLM API。请确保您的模型支持图片输入。</p>
+
+    <form method="POST" action="{{ url_for('llm_settings_page') }}">
+        <div class="mb-3">
+            <label for="api_url" class="form-label">API URL</label>
+            <input type="url" class="form-control" id="api_url" name="api_url" value="{{ llm_settings.api_url or '' }}" placeholder="例如: https://api.openai.com/v1/chat/completions" required>
+        </div>
+        <div class="mb-3">
+            <label for="api_key" class="form-label">API Key</label>
+            <input type="password" class="form-control" id="api_key" name="api_key" value="{{ llm_settings.api_key or '' }}" placeholder="如果API Key已存在，此处将显示为空" required>
+        </div>
+        <div class="mb-3">
+            <label for="model_name" class="form-label">模型名称</label>
+            <input type="text" class="form-control" id="model_name" name="model_name" value="{{ llm_settings.model_name or '' }}" placeholder="例如: gpt-4-vision-preview" required>
+        </div>
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="enabled" name="enabled" {% if llm_settings.enabled %}checked{% endif %}>
+            <label class="form-check-label" for="enabled">
+                启用图片识别功能
+            </label>
+        </div>
+        <button type="submit" class="btn btn-primary">保存设置</button>
+        <button type="button" class="btn btn-secondary" id="test-llm-connection">测试连接</button>
+    </form>
+    <div id="test-result-area" class="mt-4"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#test-llm-connection').on('click', function() {
+        const btn = $(this);
+        const resultArea = $('#test-result-area');
+        
+        resultArea.html('<p class="text-info">正在测试连接，请稍候...</p>');
+        btn.prop('disabled', true);
+
+        $.ajax({
+            url: "{{ url_for('api_test_llm_connection') }}",
+            type: 'POST',
+            data: {
+                api_url: $('#api_url').val(),
+                api_key: $('#api_key').val(),
+                model_name: $('#model_name').val(),
+                enabled: $('#enabled').is(':checked')
+            },
+            dataType: 'json',
+            success: function(response) {
+                const resultType = response.success ? 'success' : 'danger';
+                const resultMsg = `<strong>测试结果:</strong> ${response.message}`;
+                resultArea.html(`<div class="alert alert-${resultType}">${resultMsg}</div>`);
+            },
+            error: function(xhr) {
+                let errorText = '测试请求失败，请检查网络或后台日志。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorText = xhr.responseJSON.message;
+                }
+                resultArea.html(`<div class="alert alert-danger"><strong>测试失败:</strong> ${errorText}</div>`);
+            },
+            complete: function() {
+                btn.prop('disabled', false);
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

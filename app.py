@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
-import logging, os, re, threading, asyncio
+import logging, os, re, threading, asyncio, httpx, base64
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from telethon import TelegramClient, errors
@@ -290,6 +290,81 @@ def scheduler_settings_page():
     return render_template('scheduler_settings.html',
                            scheduler_enabled=config.get('scheduler_enabled'),
                            scheduler_time_slots=config.get('scheduler_time_slots', []))
+
+@app.route('/settings/llm', methods=['GET', 'POST'])
+@login_required
+def llm_settings_page():
+   config = load_config()
+   if request.method == 'POST':
+       llm_settings = config.get('llm_settings', {})
+       llm_settings['api_url'] = request.form.get('api_url', '').strip()
+       llm_settings['api_key'] = request.form.get('api_key', '').strip()
+       llm_settings['model_name'] = request.form.get('model_name', '').strip()
+       llm_settings['enabled'] = 'enabled' in request.form
+
+       config['llm_settings'] = llm_settings
+       save_config(config)
+       flash("LLM API 设置已成功保存。", "success")
+       return redirect(url_for('llm_settings_page'))
+
+   return render_template('llm_settings.html', llm_settings=config.get('llm_settings', {}))
+
+@app.route('/api/llm/test', methods=['POST'])
+@login_required
+async def api_test_llm_connection():
+   api_url = request.form.get('api_url')
+   api_key = request.form.get('api_key')
+   model_name = request.form.get('model_name')
+   is_vision_enabled = request.form.get('enabled') == 'true'
+
+   if not all([api_url, api_key, model_name]):
+       return jsonify({"success": False, "message": "API URL, API Key 和模型名称均不能为空。"}), 400
+
+   headers = {
+       "Authorization": f"Bearer {api_key}",
+       "Content-Type": "application/json"
+   }
+   
+   if is_vision_enabled:
+       image_path = os.path.join(app.static_folder, 'temp_image.png')
+       if not os.path.exists(image_path):
+           return jsonify({"success": False, "message": "测试失败：未找到测试图片 static/temp_image.png。请先放置一张图片用于测试。"}), 400
+       
+       with open(image_path, "rb") as image_file:
+           test_image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
+
+       messages = [
+           {
+               "role": "user",
+               "content": [
+                   {"type": "text", "text": "这张图片里有什么？请用中文回答。"},
+                   {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_base64}"}}
+               ]
+           }
+       ]
+   else:
+       messages = [{"role": "user", "content": "Hello"}]
+
+   json_data = {
+       "model": model_name,
+       "messages": messages
+   }
+
+   try:
+       async with httpx.AsyncClient() as client:
+           response = await client.post(api_url, headers=headers, json=json_data, timeout=20)
+           
+           if response.status_code == 200:
+               return jsonify({"success": True, "message": f"连接成功 (状态码: {response.status_code})。API返回: {response.text}"})
+           else:
+               return jsonify({"success": False, "message": f"连接失败 (状态码: {response.status_code})。错误信息: {response.text}"})
+
+   except httpx.RequestError as e:
+       logger.error(f"测试LLM API连接时发生请求错误: {e}", exc_info=True)
+       return jsonify({"success": False, "message": f"请求失败: {e}"}), 500
+   except Exception as e:
+       logger.error(f"测试LLM API连接时发生未知错误: {e}", exc_info=True)
+       return jsonify({"success": False, "message": f"发生未知错误: {e}"}), 500
 
 @app.route('/users', methods=['GET'])
 @login_required

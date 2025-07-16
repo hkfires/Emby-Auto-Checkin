@@ -1,5 +1,6 @@
-import asyncio, re
+import asyncio, re, base64, httpx, io
 from telethon import events, errors
+from config import load_config
 
 class CheckinStrategy:
     def __init__(self, client, target_entity, logger, nickname_for_logging, task_config=None):
@@ -462,11 +463,138 @@ class MathCaptchaStrategy(CheckinStrategy):
         
         return current_result
 
+class VisionCaptchaStrategy(CheckinStrategy):
+    def __init__(self, client, target_entity, logger, nickname_for_logging, task_config=None):
+        super().__init__(client, target_entity, logger, nickname_for_logging, task_config)
+        self.timeout_seconds = task_config.get("timeout", 60)
+        llm_settings = load_config().get('llm_settings', {})
+        self.api_url = llm_settings.get('api_url')
+        self.api_key = llm_settings.get('api_key')
+        self.model_name = llm_settings.get('model_name')
+
+    async def _call_vision_api(self, image_bytes, options):
+        if not self.api_url or not self.api_key or not self.model_name:
+            return {"success": False, "message": "LLM API未配置，请在API设置中完成配置。"}
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        options_text = ", ".join([f"'{opt}'" for opt in options])
+        prompt_text = f"请根据图片内容，从以下选项中选择最匹配的一个，并只返回该选项的文本，不要包含其他任何内容。选项: {options_text}"
+
+        json_data = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ]
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(self.api_url, headers=headers, json=json_data, timeout=40)
+                response.raise_for_status()
+                api_response = response.json()
+                
+                content = api_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+                self.logger.info(f"用户 {self.nickname_for_logging}: Vision API 响应: {content}")
+                return {"success": True, "content": content.strip()}
+        except httpx.RequestError as e:
+            self.logger.error(f"用户 {self.nickname_for_logging}: 调用 Vision API 失败: {e}")
+            return {"success": False, "message": f"调用 Vision API 失败: {e}"}
+        except Exception as e:
+            self.logger.error(f"用户 {self.nickname_for_logging}: 解析 Vision API 响应失败: {e}")
+            return {"success": False, "message": f"解析 Vision API 响应失败: {e}"}
+
+    async def execute(self):
+        self.logger.info(f"用户 {self.nickname_for_logging}: 使用 VisionCaptchaStrategy 开始执行操作。")
+        command_to_send = self.task_config.get("command", "/checkin")
+        await self.send_command(command_to_send)
+
+        try:
+            async with self.client.conversation(self.target_entity, timeout=self.timeout_seconds) as conv:
+                response_message = await conv.get_response()
+                
+                if response_message and response_message.photo:
+                    self.logger.info(f"用户 {self.nickname_for_logging}: 收到图片消息，准备下载并识别。")
+                    
+                    image_bytes_io = io.BytesIO()
+                    await self.client.download_media(response_message.photo, file=image_bytes_io)
+                    image_bytes = image_bytes_io.getvalue()
+
+                    # 提取所有按钮文本作为选项
+                    available_options = []
+                    if response_message.buttons:
+                        for row in response_message.buttons:
+                            for button in row:
+                                if hasattr(button, 'text') and button.text:
+                                    available_options.append(button.text.strip())
+                    
+                    if not available_options:
+                        self.logger.warning(f"用户 {self.nickname_for_logging}: 收到图片消息但未找到任何按钮选项。")
+                        return {"success": False, "message": "收到图片消息但未找到任何按钮选项。"}
+
+                    api_result = await self._call_vision_api(image_bytes, available_options)
+
+                    if not api_result.get("success"):
+                        return {"success": False, "message": api_result.get("message", "图片识别失败。")}
+                    
+                    predicted_answer = api_result.get("content")
+                    if not predicted_answer:
+                        return {"success": False, "message": "图片识别结果为空。"}
+
+                    self.logger.info(f"用户 {self.nickname_for_logging}: LLM预测答案: '{predicted_answer}'，尝试点击对应按钮。")
+                    
+                    # 尝试精确匹配LLM返回的答案
+                    click_result = await self._click_button_in_message(response_message, [predicted_answer], is_answer_logic=True)
+
+                    if click_result is None:
+                        # 如果精确匹配失败，尝试模糊匹配（例如，LLM返回“路由器”，按钮是“路由器”）
+                        self.logger.warning(f"用户 {self.nickname_for_logging}: 未找到精确匹配的答案按钮 '{predicted_answer}'，尝试模糊匹配。")
+                        click_result = await self._click_button_in_message(response_message, [predicted_answer], is_answer_logic=False)
+                        
+                        if click_result is None:
+                            return {"success": False, "message": f"未找到与 '{predicted_answer}' 匹配的按钮（精确或模糊）。"}
+                        if isinstance(click_result, Exception):
+                            return {"success": False, "message": f"点击模糊匹配答案按钮 '{predicted_answer}' 失败: {click_result}"}
+
+                    if hasattr(click_result, 'message') and click_result.message:
+                        return await self._parse_response_text(click_result.message)
+                    else:
+                        self.logger.info(f"用户 {self.nickname_for_logging}: 点击按钮后无弹框，等待后续消息。")
+                        follow_up_message = await conv.get_response(timeout=5)
+                        if follow_up_message:
+                            return await self._parse_response_text(follow_up_message.text)
+                        else:
+                            return {"success": False, "message": "点击按钮后未收到后续响应。"}
+
+                elif response_message and response_message.text:
+                    self.logger.info(f"用户 {self.nickname_for_logging}: 收到文本消息，按常规流程处理: {response_message.text}")
+                    return await self._parse_response_text(response_message.text)
+                else:
+                    return {"success": False, "message": "未收到有效的图片或文本消息。"}
+
+        except asyncio.TimeoutError:
+            return {"success": False, "message": "等待图片验证码消息超时。"}
+        except Exception as e:
+            self.logger.error(f"用户 {self.nickname_for_logging}: VisionCaptchaStrategy 执行失败: {e}", exc_info=True)
+            return {"success": False, "message": f"执行图片验证码策略时发生未知错误: {e}"}
+
 STRATEGY_MAPPING = {
     "start_button_alert": StartCommandButtonAlertStrategy,
     "checkin_text": CheckinCommandTextStrategy,
     "send_custom_message": SendMessageToChatStrategy,
     "math_captcha_checkin": MathCaptchaStrategy,
+    "vision_captcha_checkin": VisionCaptchaStrategy,
 }
 
 STRATEGY_DISPLAY_NAMES = {
@@ -474,6 +602,7 @@ STRATEGY_DISPLAY_NAMES = {
     "checkin_text": {"name": "发送/checkin", "target_type": "bot", "config_params": ["command", "timeout"]},
     "send_custom_message": {"name": "发送自定义消息", "target_type": "chat", "config_params": ["message_content"]},
     "math_captcha_checkin": {"name": "签到按钮+验证", "target_type": "bot", "config_params": ["command", "initial_button_keywords", "timeout"]},
+    "vision_captcha_checkin": {"name": "/checkin+图片识别", "target_type": "bot", "config_params": ["command", "timeout"]},
 }
 
 def get_strategy_class(strategy_identifier):
