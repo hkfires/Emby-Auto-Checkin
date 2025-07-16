@@ -312,59 +312,88 @@ def llm_settings_page():
 @app.route('/api/llm/test', methods=['POST'])
 @login_required
 async def api_test_llm_connection():
-   api_url = request.form.get('api_url')
-   api_key = request.form.get('api_key')
-   model_name = request.form.get('model_name')
-   is_vision_enabled = request.form.get('enabled') == 'true'
+    base_api_url = request.form.get('api_url', '').strip().rstrip('/')
+    api_key = request.form.get('api_key')
+    model_name = request.form.get('model_name')
+    is_vision_enabled = request.form.get('enabled') == 'true'
 
-   if not all([api_url, api_key, model_name]):
-       return jsonify({"success": False, "message": "API URL, API Key 和模型名称均不能为空。"}), 400
+    if not all([base_api_url, api_key, model_name]):
+        return jsonify({"success": False, "message": "API URL, API Key 和模型名称均不能为空。"}), 400
 
-   headers = {
-       "Authorization": f"Bearer {api_key}",
-       "Content-Type": "application/json"
-   }
-   
-   if is_vision_enabled:
-       image_path = os.path.join(app.static_folder, 'temp_image.png')
-       if not os.path.exists(image_path):
-           return jsonify({"success": False, "message": "测试失败：未找到测试图片 static/temp_image.png。请先放置一张图片用于测试。"}), 400
-       
-       with open(image_path, "rb") as image_file:
-           test_image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    chat_url = f"{base_api_url}/v1/chat/completions"
 
-       messages = [
-           {
-               "role": "user",
-               "content": [
-                   {"type": "text", "text": "这张图片里有什么？请用中文回答。"},
-                   {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_base64}"}}
-               ]
-           }
-       ]
-   else:
-       messages = [{"role": "user", "content": "Hello"}]
+    if is_vision_enabled:
+        image_path = os.path.join(app.static_folder, 'temp_image.png')
+        if not os.path.exists(image_path):
+            return jsonify({"success": False, "message": "测试失败：未找到测试图片 static/temp_image.png。请先放置一张图片用于测试。"}), 400
+        
+        with open(image_path, "rb") as image_file:
+            test_image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
 
-   json_data = {
-       "model": model_name,
-       "messages": messages
-   }
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "这张图片里有什么？请用中文回答。"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_base64}"}}
+                ]
+            }
+        ]
+    else:
+        messages = [{"role": "user", "content": "Hello"}]
 
-   try:
-       async with httpx.AsyncClient() as client:
-           response = await client.post(api_url, headers=headers, json=json_data, timeout=20)
-           
-           if response.status_code == 200:
-               return jsonify({"success": True, "message": f"连接成功 (状态码: {response.status_code})。API返回: {response.text}"})
-           else:
-               return jsonify({"success": False, "message": f"连接失败 (状态码: {response.status_code})。错误信息: {response.text}"})
+    json_data = {
+        "model": model_name,
+        "messages": messages
+    }
 
-   except httpx.RequestError as e:
-       logger.error(f"测试LLM API连接时发生请求错误: {e}", exc_info=True)
-       return jsonify({"success": False, "message": f"请求失败: {e}"}), 500
-   except Exception as e:
-       logger.error(f"测试LLM API连接时发生未知错误: {e}", exc_info=True)
-       return jsonify({"success": False, "message": f"发生未知错误: {e}"}), 500
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(chat_url, headers=headers, json=json_data, timeout=20)
+            
+            if response.status_code == 200:
+                return jsonify({"success": True, "message": f"连接成功 (状态码: {response.status_code})。API返回: {response.text}"})
+            else:
+                return jsonify({"success": False, "message": f"连接失败 (状态码: {response.status_code})。URL: {chat_url}, 错误信息: {response.text}"})
+
+    except httpx.RequestError as e:
+        logger.error(f"测试LLM API连接时发生请求错误: {e}", exc_info=True)
+        return jsonify({"success": False, "message": f"请求失败: {e}"}), 500
+    except Exception as e:
+        logger.error(f"测试LLM API连接时发生未知错误: {e}", exc_info=True)
+        return jsonify({"success": False, "message": f"发生未知错误: {e}"}), 500
+
+@app.route('/api/llm/models', methods=['POST'])
+@login_required
+async def api_get_llm_models():
+    base_api_url = request.form.get('api_url', '').strip().rstrip('/')
+    api_key = request.form.get('api_key')
+
+    if not all([base_api_url, api_key]):
+        return jsonify({"success": False, "message": "API URL 和 API Key 均不能为空。"}), 400
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    models_url = f"{base_api_url}/v1/models"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(models_url, headers=headers, timeout=20)
+            if response.status_code == 200:
+                models_data = response.json().get('data', [])
+                return jsonify({"success": True, "models": models_data})
+            else:
+                return jsonify({"success": False, "message": f"获取模型列表失败 (状态码: {response.status_code})。URL: {models_url}, 错误: {response.text}"})
+    except httpx.RequestError as e:
+        logger.error(f"获取LLM模型列表时发生请求错误: {e}", exc_info=True)
+        return jsonify({"success": False, "message": f"请求失败: {e}"}), 500
+    except Exception as e:
+        logger.error(f"获取LLM模型列表时发生未知错误: {e}", exc_info=True)
+        return jsonify({"success": False, "message": f"发生未知错误: {e}"}), 500
 
 @app.route('/users', methods=['GET'])
 @login_required

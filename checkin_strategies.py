@@ -468,7 +468,7 @@ class VisionCaptchaStrategy(CheckinStrategy):
         super().__init__(client, target_entity, logger, nickname_for_logging, task_config)
         self.timeout_seconds = task_config.get("timeout", 60)
         llm_settings = load_config().get('llm_settings', {})
-        self.api_url = llm_settings.get('api_url')
+        self.base_api_url = llm_settings.get('api_url', '').strip().rstrip('/')
         self.api_key = llm_settings.get('api_key')
         self.model_name = llm_settings.get('model_name')
 
@@ -501,7 +501,8 @@ class VisionCaptchaStrategy(CheckinStrategy):
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(self.api_url, headers=headers, json=json_data, timeout=40)
+                chat_url = f"{self.base_api_url}/v1/chat/completions"
+                response = await client.post(chat_url, headers=headers, json=json_data, timeout=40)
                 response.raise_for_status()
                 api_response = response.json()
                 
@@ -602,7 +603,7 @@ STRATEGY_DISPLAY_NAMES = {
     "checkin_text": {"name": "发送/checkin", "target_type": "bot", "config_params": ["command", "timeout"]},
     "send_custom_message": {"name": "发送自定义消息", "target_type": "chat", "config_params": ["message_content"]},
     "math_captcha_checkin": {"name": "签到按钮+验证", "target_type": "bot", "config_params": ["command", "initial_button_keywords", "timeout"]},
-    "vision_captcha_checkin": {"name": "/checkin+图片识别", "target_type": "bot", "config_params": ["command", "timeout"]},
+    "vision_captcha_checkin": {"name": "图片识别验证", "target_type": "bot", "config_params": ["command", "timeout"]},
 }
 
 def get_strategy_class(strategy_identifier):
