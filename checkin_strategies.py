@@ -473,7 +473,7 @@ class VisionCaptchaStrategy(CheckinStrategy):
         self.model_name = llm_settings.get('model_name')
 
     async def _call_vision_api(self, image_bytes, options):
-        if not self.api_url or not self.api_key or not self.model_name:
+        if not self.base_api_url or not self.api_key or not self.model_name:
             return {"success": False, "message": "LLM API未配置，请在API设置中完成配置。"}
 
         headers = {
@@ -519,12 +519,14 @@ class VisionCaptchaStrategy(CheckinStrategy):
     async def execute(self):
         self.logger.info(f"用户 {self.nickname_for_logging}: 使用 VisionCaptchaStrategy 开始执行操作。")
         command_to_send = self.task_config.get("command", "/checkin")
-        await self.send_command(command_to_send)
 
         try:
             async with self.client.conversation(self.target_entity, timeout=self.timeout_seconds) as conv:
-                response_message = await conv.get_response()
+                await conv.send_message(command_to_send)
+                self.logger.info(f"用户 {self.nickname_for_logging}: (对话内)已发送命令 '{command_to_send}'")
                 
+                response_message = await conv.get_response()
+
                 if response_message and response_message.photo:
                     self.logger.info(f"用户 {self.nickname_for_logging}: 收到图片消息，准备下载并识别。")
                     
@@ -532,7 +534,6 @@ class VisionCaptchaStrategy(CheckinStrategy):
                     await self.client.download_media(response_message.photo, file=image_bytes_io)
                     image_bytes = image_bytes_io.getvalue()
 
-                    # 提取所有按钮文本作为选项
                     available_options = []
                     if response_message.buttons:
                         for row in response_message.buttons:
@@ -555,11 +556,9 @@ class VisionCaptchaStrategy(CheckinStrategy):
 
                     self.logger.info(f"用户 {self.nickname_for_logging}: LLM预测答案: '{predicted_answer}'，尝试点击对应按钮。")
                     
-                    # 尝试精确匹配LLM返回的答案
                     click_result = await self._click_button_in_message(response_message, [predicted_answer], is_answer_logic=True)
 
                     if click_result is None:
-                        # 如果精确匹配失败，尝试模糊匹配（例如，LLM返回“路由器”，按钮是“路由器”）
                         self.logger.warning(f"用户 {self.nickname_for_logging}: 未找到精确匹配的答案按钮 '{predicted_answer}'，尝试模糊匹配。")
                         click_result = await self._click_button_in_message(response_message, [predicted_answer], is_answer_logic=False)
                         
@@ -572,22 +571,33 @@ class VisionCaptchaStrategy(CheckinStrategy):
                         return await self._parse_response_text(click_result.message)
                     else:
                         self.logger.info(f"用户 {self.nickname_for_logging}: 点击按钮后无弹框，等待后续消息。")
-                        follow_up_message = await conv.get_response(timeout=5)
-                        if follow_up_message:
-                            return await self._parse_response_text(follow_up_message.text)
-                        else:
-                            return {"success": False, "message": "点击按钮后未收到后续响应。"}
-
+                        try:
+                            follow_up_message = await conv.get_response(timeout=5)
+                            if follow_up_message and follow_up_message.text:
+                                return await self._parse_response_text(follow_up_message.text)
+                            else:
+                                self.logger.warning(f"用户 {self.nickname_for_logging}: 后续响应为空或无文本。")
+                                return {"success": False, "message": "点击按钮后未收到有效的后续响应。"}
+                        except asyncio.TimeoutError:
+                            self.logger.warning(f"用户 {self.nickname_for_logging}: 等待后续响应超时。")
+                            return {"success": False, "message": "点击按钮后等待后续响应超时。"}
+                
                 elif response_message and response_message.text:
-                    self.logger.info(f"用户 {self.nickname_for_logging}: 收到文本消息，按常规流程处理: {response_message.text}")
+                    self.logger.info(f"用户 {self.nickname_for_logging}: 收到纯文本消息，按常规流程处理: {response_message.text}")
                     return await self._parse_response_text(response_message.text)
+                
                 else:
+                    self.logger.warning(f"用户 {self.nickname_for_logging}: 未收到有效的图片或文本消息。响应: {response_message}")
                     return {"success": False, "message": "未收到有效的图片或文本消息。"}
 
         except asyncio.TimeoutError:
-            return {"success": False, "message": "等待图片验证码消息超时。"}
+            self.logger.warning(f"用户 {self.nickname_for_logging}: 等待机器人响应超时。")
+            return {"success": False, "message": "等待机器人响应超时。"}
+        except errors.rpcerrorlist.MessageNotModifiedError:
+            self.logger.warning(f"用户 {self.nickname_for_logging}: 消息未修改，这通常是良性的，但表明没有新内容。")
+            return {"success": False, "message": "消息无变化，可能操作已完成或无新动态。"}
         except Exception as e:
-            self.logger.error(f"用户 {self.nickname_for_logging}: VisionCaptchaStrategy 执行失败: {e}", exc_info=True)
+            self.logger.error(f"用户 {self.nickname_for_logging}: VisionCaptchaStrategy 执行时发生意外错误: {e}", exc_info=True)
             return {"success": False, "message": f"执行图片验证码策略时发生未知错误: {e}"}
 
 STRATEGY_MAPPING = {
@@ -603,7 +613,7 @@ STRATEGY_DISPLAY_NAMES = {
     "checkin_text": {"name": "发送/checkin", "target_type": "bot", "config_params": ["command", "timeout"]},
     "send_custom_message": {"name": "发送自定义消息", "target_type": "chat", "config_params": ["message_content"]},
     "math_captcha_checkin": {"name": "签到按钮+验证", "target_type": "bot", "config_params": ["command", "initial_button_keywords", "timeout"]},
-    "vision_captcha_checkin": {"name": "图片识别验证", "target_type": "bot", "config_params": ["command", "timeout"]},
+    "vision_captcha_checkin": {"name": "checkin+图片识别", "target_type": "bot", "config_params": ["command", "timeout"]},
 }
 
 def get_strategy_class(strategy_identifier):
