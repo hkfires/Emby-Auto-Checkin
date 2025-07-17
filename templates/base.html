@@ -30,6 +30,9 @@
                     <a class="nav-link {% if request.endpoint == 'api_settings_page' %}active{% endif %}" href="{{ url_for('api_settings_page') }}">TG API 设置</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint == 'llm_settings_page' %}active{% endif %}" href="{{ url_for('llm_settings_page') }}">LLM API 设置</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link {% if request.endpoint == 'scheduler_settings_page' %}active{% endif %}" href="{{ url_for('scheduler_settings_page') }}">自动签到设置</a>
                 </li>
                 <li class="nav-item">

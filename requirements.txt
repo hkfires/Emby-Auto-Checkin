@@ -5,3 +5,4 @@ Flask-Login
 Werkzeug
 gunicorn
 SQLAlchemy
+httpx

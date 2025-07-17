@@ -18,7 +18,12 @@ def _get_default_config():
         "checkin_tasks": [],
         "scheduler_enabled": False,
         "scheduler_time_slots": [_get_default_time_slot()],
-        "web_users": []
+        "web_users": [],
+        "llm_settings": {
+            "api_url": "",
+            "api_key": "",
+            "model_name": ""
+        }
     }
     default_slot_id = 1
     if cfg["scheduler_time_slots"] and isinstance(cfg["scheduler_time_slots"][0], dict):
@@ -49,6 +54,12 @@ def load_config():
     config.setdefault("checkin_tasks", [])
     config.setdefault("scheduler_enabled", False)
     config.setdefault("web_users", [])
+    config.setdefault("llm_settings", {
+        "api_url": "",
+        "api_key": "",
+        "model_name": "",
+        "enabled": False
+    })
 
     migrated_to_slots_this_run = False
 

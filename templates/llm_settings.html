@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}LLM API 设置{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>LLM API 设置</h2>
+    <p>在这里配置用于图片识别的LLM API。请确保您的模型支持图片输入。</p>
+
+    <div class="alert alert-info" role="alert">
+        <h4 class="alert-heading">配置提示</h4>
+        <ul>
+            <li>API URL 请填写基础地址 (Base URL)，例如 <code>https://api.example.com</code>。程序会自动在末尾拼接 <code>/v1</code>，请勿重复添加。</li>
+            <li>推荐使用 <code>gemini-2.5-flash-lite</code> 模型，它在速度和识别准确率上表现优异且成本较低。</li>
+            <li>请确保填写的 API Key 拥有调用所选模型的权限。</li>
+        </ul>
+    </div>
+
+    <form method="POST" action="{{ url_for('llm_settings_page') }}">
+        <div class="mb-3">
+            <label for="api_url" class="form-label">API URL</label>
+            <input type="url" class="form-control" id="api_url" name="api_url" value="{{ llm_settings.api_url or '' }}" placeholder="例如: https://proxyapi.meina.cn.eu.org" required>
+        </div>
+        <div class="mb-3">
+            <label for="api_key" class="form-label">API Key</label>
+            <input type="password" class="form-control" id="api_key" name="api_key" value="{{ llm_settings.api_key or '' }}" placeholder="如果API Key已存在，此处将显示为空" required>
+        </div>
+        <div class="mb-3">
+            <label for="model_name" class="form-label">模型名称</label>
+            <div class="input-group">
+                <select class="form-control" id="model_name" name="model_name" required>
+                    {% if llm_settings.model_name %}
+                        <option value="{{ llm_settings.model_name }}" selected>{{ llm_settings.model_name }}</option>
+                    {% else %}
+                        <option value="" disabled selected>请先获取模型列表</option>
+                    {% endif %}
+                </select>
+                <button class="btn btn-outline-secondary" type="button" id="fetch-models-btn">获取模型列表</button>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">保存设置</button>
+        <button type="button" class="btn btn-secondary" id="test-llm-connection">测试模型</button>
+    </form>
+    <div class="row mt-4">
+        <div class="col-md-5">
+            <h5>测试图片预览</h5>
+            <p>点击“测试模型”按钮时，将使用以下图片进行识别。</p>
+            <img src="{{ url_for('static', filename='test_image.png') }}" class="img-fluid rounded border" style="max-width: 100%;" alt="测试图片">
+        </div>
+        <div class="col-md-7">
+            <h5>测试结果</h5>
+            <div id="test-result-area" class="mt-2" style="min-height: 100px;"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#fetch-models-btn').on('click', function() {
+        const btn = $(this);
+        const resultArea = $('#test-result-area');
+        const modelSelect = $('#model_name');
+        const apiUrl = $('#api_url').val();
+        const apiKey = $('#api_key').val();
+
+        if (!apiUrl || !apiKey) {
+            alert('请先填写 API URL 和 API Key。');
+            return;
+        }
+
+        resultArea.html('<p class="text-info">正在获取模型列表...</p>');
+        btn.prop('disabled', true);
+
+        $.ajax({
+            url: "{{ url_for('api_get_llm_models') }}",
+            type: 'POST',
+            data: { api_url: apiUrl, api_key: apiKey },
+            dataType: 'json',
+            success: function(response) {
+                if (response.success) {
+                    modelSelect.empty();
+                    $.each(response.models, function(i, model) {
+                        modelSelect.append($('<option>', {
+                            value: model.id,
+                            text: model.id
+                        }));
+                    });
+                    resultArea.html('<div class="alert alert-success">模型列表获取成功！</div>');
+                } else {
+                    resultArea.html(`<div class="alert alert-danger">获取模型列表失败: ${response.message}</div>`);
+                }
+            },
+            error: function(xhr) {
+                let errorText = '请求失败，请检查网络或后台日志。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorText = xhr.responseJSON.message;
+                }
+                resultArea.html(`<div class="alert alert-danger">获取模型列表失败: ${errorText}</div>`);
+            },
+            complete: function() {
+                btn.prop('disabled', false);
+            }
+        });
+    });
+
+    $('#test-llm-connection').on('click', function() {
+        const btn = $(this);
+        const resultArea = $('#test-result-area');
+        
+        resultArea.html('<p class="text-info">正在测试模型，请稍候...</p>');
+        btn.prop('disabled', true);
+
+        $.ajax({
+            url: "{{ url_for('api_test_llm_connection') }}",
+            type: 'POST',
+            data: {
+                api_url: $('#api_url').val(),
+                api_key: $('#api_key').val(),
+                model_name: $('#model_name').val()
+            },
+            dataType: 'json',
+            success: function(response) {
+                const resultType = response.success ? 'success' : 'danger';
+                const resultMsg = `<strong>测试结果:</strong> ${response.message}`;
+                resultArea.html(`<div class="alert alert-${resultType}">${resultMsg}</div>`);
+            },
+            error: function(xhr) {
+                let errorText = '测试请求失败，请检查网络或后台日志。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorText = xhr.responseJSON.message;
+                }
+                resultArea.html(`<div class="alert alert-danger"><strong>测试失败:</strong> ${errorText}</div>`);
+            },
+            complete: function() {
+                btn.prop('disabled', false);
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
