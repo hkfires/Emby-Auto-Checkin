@@ -630,7 +630,7 @@ STRATEGY_MAPPING = {
 
 STRATEGY_DISPLAY_NAMES = {
     "start_button_alert": {"name": "点击签到按钮", "target_type": "bot", "config_params": ["timeout"]},
-    "checkin_text": {"name": "发送/checkin", "target_type": "bot", "config_params": ["command", "timeout"]},
+    "checkin_text": {"name": "发送签到指令", "target_type": "bot", "config_params": ["command", "timeout"]},
     "send_custom_message": {"name": "发送自定义消息", "target_type": "chat", "config_params": ["message_content"]},
     "math_captcha_checkin": {"name": "签到按钮+验证", "target_type": "bot", "config_params": ["command", "initial_button_keywords", "timeout"]},
     "vision_captcha_checkin": {"name": "checkin+图片识别", "target_type": "bot", "config_params": ["command", "timeout"]},
