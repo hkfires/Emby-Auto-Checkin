@@ -295,17 +295,6 @@ def scheduler_settings_page():
 @login_required
 def llm_settings_page():
    config = load_config()
-   if request.method == 'POST':
-       llm_settings = config.get('llm_settings', {})
-       llm_settings['api_url'] = request.form.get('api_url', '').strip()
-       llm_settings['api_key'] = request.form.get('api_key', '').strip()
-       llm_settings['model_name'] = request.form.get('model_name', '').strip()
-
-       config['llm_settings'] = llm_settings
-       save_config(config)
-       flash("LLM API 设置已成功保存。", "success")
-       return redirect(url_for('llm_settings_page'))
-
    return render_template('llm_settings.html', llm_settings=config.get('llm_settings', {}))
 
 @app.route('/api/llm/test', methods=['POST'])
@@ -335,7 +324,7 @@ async def api_test_llm_connection():
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "请识别这张图片。如果图片中包含多个文字选项，请选择最核心或最突出的一个并只返回该选项的文本。如果图片是普通场景，请用一个简短的中文词语描述其核心内容。不要添加任何解释或标点。"},
+                {"type": "text", "text": "这是一张图片问答截图。请仔细观察图片上半部分的主要物体，然后在下方的几个文字选项按钮中，选择一个最能准确描述该物体的词语。请直接返回你选择的那个词语，不要包含任何其他文字、解释或标点符号。如果你不支持读取图片并识别，则明确说明当前模型不支持图片识别。"},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_base64}"}}
             ]
         }
@@ -355,10 +344,26 @@ async def api_test_llm_connection():
                     api_response = response.json()
                     content = api_response.get("choices", [{}])[0].get("message", {}).get("content", "")
                     if content:
-                        message = f"识别成功。图中正确选项为：{content}"
+                        if content.strip() == "路由器":
+                            config = load_config()
+                            llm_settings = config.get('llm_settings', {})
+                            llm_settings['api_url'] = base_api_url
+                            llm_settings['api_key'] = api_key
+                            llm_settings['model_name'] = model_name
+                            config['llm_settings'] = llm_settings
+                            save_config(config)
+                            
+                            message = f"测试成功。模型正确识别出了图片内容为：{content}"
+                            return jsonify({"success": True, "message": message})
+                        elif "不支持图片识别" in content:
+                            message = f"测试失败。模型不支持图片识别，返回结果：{content}"
+                            return jsonify({"success": False, "message": message})
+                        else:
+                            message = f"测试失败。模型返回了非预期的结果：{content}"
+                            return jsonify({"success": False, "message": message})
                     else:
                         message = "连接成功，但未能从API响应中解析出识别结果。"
-                    return jsonify({"success": True, "message": message})
+                        return jsonify({"success": False, "message": message})
                 except Exception as e:
                     logger.error(f"解析LLM API测试响应时出错: {e}", exc_info=True)
                     return jsonify({"success": False, "message": f"连接成功，但解析API响应失败。原始返回: {response.text}"})

@@ -38,8 +38,7 @@
                 <button class="btn btn-outline-secondary" type="button" id="fetch-models-btn">获取模型列表</button>
             </div>
         </div>
-        <button type="submit" class="btn btn-primary">保存设置</button>
-        <button type="button" class="btn btn-secondary" id="test-llm-connection">测试模型</button>
+        <button type="button" class="btn btn-primary" id="test-and-save-llm-settings">测试模型并保存</button>
     </form>
     <div class="row mt-4">
         <div class="col-md-5">
@@ -105,10 +104,11 @@ $(document).ready(function() {
         });
     });
 
-    $('#test-llm-connection').on('click', function() {
+    $('#test-and-save-llm-settings').on('click', function() {
         const btn = $(this);
         const resultArea = $('#test-result-area');
-        
+        const form = btn.closest('form');
+
         resultArea.html('<p class="text-info">正在测试模型，请稍候...</p>');
         btn.prop('disabled', true);
 
@@ -123,7 +123,17 @@ $(document).ready(function() {
             dataType: 'json',
             success: function(response) {
                 const resultType = response.success ? 'success' : 'danger';
-                const resultMsg = `<strong>测试结果:</strong> ${response.message}`;
+                let resultMsg = `<strong>测试结果:</strong> ${response.message}`;
+                if (response.success) {
+                    resultMsg += '<br>设置已成功保存！页面即将刷新...';
+                    showAlert('设置已成功保存！页面即将刷新...', 'success');
+                    setTimeout(function() {
+                        location.reload();
+                    }, 2000);
+                } else {
+                    resultMsg += '<br><strong>请注意：LLM API 设置未保存！</strong>';
+                    showAlert(`测试失败: ${response.message}`, 'danger');
+                }
                 resultArea.html(`<div class="alert alert-${resultType}">${resultMsg}</div>`);
             },
             error: function(xhr) {
@@ -131,7 +141,8 @@ $(document).ready(function() {
                 if (xhr.responseJSON && xhr.responseJSON.message) {
                     errorText = xhr.responseJSON.message;
                 }
-                resultArea.html(`<div class="alert alert-danger"><strong>测试失败:</strong> ${errorText}</div>`);
+                resultArea.html(`<div class="alert alert-danger"><strong>测试失败:</strong> ${errorText}<br><strong>请注意：LLM API 设置未保存！</strong></div>`);
+                showAlert(`测试失败: ${errorText}`, 'danger');
             },
             complete: function() {
                 btn.prop('disabled', false);
