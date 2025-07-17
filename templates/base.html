@@ -92,6 +92,7 @@
         function showAlert(message, type = 'info', areaId = 'global-message-area') {
             const area = document.getElementById(areaId);
             if (!area) return;
+            area.innerHTML = '';
             const wrapper = document.createElement('div');
             wrapper.innerHTML = [
                 `<div class="alert alert-${type} alert-dismissible" role="alert">`,

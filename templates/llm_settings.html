@@ -60,17 +60,17 @@
 $(document).ready(function() {
     $('#fetch-models-btn').on('click', function() {
         const btn = $(this);
-        const resultArea = $('#test-result-area');
         const modelSelect = $('#model_name');
         const apiUrl = $('#api_url').val();
         const apiKey = $('#api_key').val();
 
         if (!apiUrl || !apiKey) {
-            alert('请先填写 API URL 和 API Key。');
+            showAlert('请先填写 API URL 和 API Key。', 'warning');
             return;
         }
 
-        resultArea.html('<p class="text-info">正在获取模型列表...</p>');
+        showAlert('正在获取模型列表...', 'info');
+        $('#test-result-area').html('');
         btn.prop('disabled', true);
 
         $.ajax({
@@ -87,9 +87,9 @@ $(document).ready(function() {
                             text: model.id
                         }));
                     });
-                    resultArea.html('<div class="alert alert-success">模型列表获取成功！</div>');
+                    showAlert('模型列表获取成功！', 'success');
                 } else {
-                    resultArea.html(`<div class="alert alert-danger">获取模型列表失败: ${response.message}</div>`);
+                    showAlert(`获取模型列表失败: ${response.message}`, 'danger');
                 }
             },
             error: function(xhr) {
@@ -97,7 +97,7 @@ $(document).ready(function() {
                 if (xhr.responseJSON && xhr.responseJSON.message) {
                     errorText = xhr.responseJSON.message;
                 }
-                resultArea.html(`<div class="alert alert-danger">获取模型列表失败: ${errorText}</div>`);
+                showAlert(`获取模型列表失败: ${errorText}`, 'danger');
             },
             complete: function() {
                 btn.prop('disabled', false);
