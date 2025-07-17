@@ -277,6 +277,23 @@ class MathCaptchaStrategy(CheckinStrategy):
         self.logger.warning(f"用户 {self.nickname_for_logging}: 无法从文本中解析数学问题: '{problem_text}'")
         return None
 
+    async def _process_math_follow_up(self):
+        self.logger.info(f"用户 {self.nickname_for_logging}: 等待数学验证后续聊天消息 (默认5秒)。")
+        await asyncio.sleep(5)
+        messages_after_click = await self.client.get_messages(self.target_entity, limit=1)
+        if messages_after_click:
+            if messages_after_click[0].sender_id == self.target_entity.id or \
+               messages_after_click[0].sender_id == (await self.client.get_me()).id:
+                chat_response_text = messages_after_click[0].text
+                self.logger.info(f"用户 {self.nickname_for_logging}: 机器人后续聊天响应: {chat_response_text}")
+                return await self._parse_response_text(chat_response_text)
+            else:
+                self.logger.warning(f"用户 {self.nickname_for_logging}: 收到的最新消息并非来自目标机器人/实体。")
+                return {"success": False, "message": "收到的最新消息并非来自目标机器人/实体。"}
+        else:
+            self.logger.warning(f"用户 {self.nickname_for_logging}: 点击答案按钮后也未收到聊天响应。")
+            return {"success": False, "message": "点击答案后未收到机器人后续响应（弹框或聊天消息）。"}
+
     async def _handle_captcha_message_and_click_answer(self, message_obj_from_event):
         self.logger.info(f"用户 {self.nickname_for_logging}: 处理验证码消息 (来自事件 ID: {message_obj_from_event.id}): {message_obj_from_event.raw_text[:70]}...")
         
@@ -327,8 +344,8 @@ class MathCaptchaStrategy(CheckinStrategy):
             self.logger.info(f"用户 {self.nickname_for_logging}: 点击答案后收到弹框: {alert_text_final}")
             return await self._parse_response_text(alert_text_final)
         else:
-            self.logger.warning(f"用户 {self.nickname_for_logging}: 点击答案按钮后未收到预期的弹框确认。")
-            return {"success": False, "message": "点击答案后未收到弹框确认。"}
+            self.logger.info(f"用户 {self.nickname_for_logging}: 点击答案按钮后无弹框，将检查后续聊天消息。")
+            return await self._process_math_follow_up()
 
     async def execute(self):
         self.logger.info(f"用户 {self.nickname_for_logging}: 使用 MathCaptchaStrategy (独立Execute) 开始执行操作。")
@@ -500,6 +517,7 @@ class VisionCaptchaStrategy(CheckinStrategy):
         }
 
         try:
+            self.logger.info(f"用户 {self.nickname_for_logging}: 正在调用 Vision API。模型: {self.model_name}, 提示: {prompt_text}")
             async with httpx.AsyncClient() as client:
                 chat_url = f"{self.base_api_url}/v1/chat/completions"
                 response = await client.post(chat_url, headers=headers, json=json_data, timeout=40)
@@ -568,12 +586,14 @@ class VisionCaptchaStrategy(CheckinStrategy):
                             return {"success": False, "message": f"点击模糊匹配答案按钮 '{predicted_answer}' 失败: {click_result}"}
 
                     if hasattr(click_result, 'message') and click_result.message:
+                        self.logger.info(f"用户 {self.nickname_for_logging}: 点击按钮后收到弹框: {click_result.message}")
                         return await self._parse_response_text(click_result.message)
                     else:
                         self.logger.info(f"用户 {self.nickname_for_logging}: 点击按钮后无弹框，等待后续消息。")
                         try:
                             follow_up_message = await conv.get_response(timeout=5)
                             if follow_up_message and follow_up_message.text:
+                                self.logger.info(f"用户 {self.nickname_for_logging}: 收到后续响应: {follow_up_message.text}")
                                 return await self._parse_response_text(follow_up_message.text)
                             else:
                                 self.logger.warning(f"用户 {self.nickname_for_logging}: 后续响应为空或无文本。")
