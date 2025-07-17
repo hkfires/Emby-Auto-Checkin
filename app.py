@@ -300,7 +300,6 @@ def llm_settings_page():
        llm_settings['api_url'] = request.form.get('api_url', '').strip()
        llm_settings['api_key'] = request.form.get('api_key', '').strip()
        llm_settings['model_name'] = request.form.get('model_name', '').strip()
-       llm_settings['enabled'] = 'enabled' in request.form
 
        config['llm_settings'] = llm_settings
        save_config(config)
@@ -315,8 +314,6 @@ async def api_test_llm_connection():
     base_api_url = request.form.get('api_url', '').strip().rstrip('/')
     api_key = request.form.get('api_key')
     model_name = request.form.get('model_name')
-    is_vision_enabled = request.form.get('enabled') == 'true'
-
     if not all([base_api_url, api_key, model_name]):
         return jsonify({"success": False, "message": "API URL, API Key 和模型名称均不能为空。"}), 400
 
@@ -327,25 +324,22 @@ async def api_test_llm_connection():
     
     chat_url = f"{base_api_url}/v1/chat/completions"
 
-    if is_vision_enabled:
-        image_path = os.path.join(app.static_folder, 'temp_image.png')
-        if not os.path.exists(image_path):
-            return jsonify({"success": False, "message": "测试失败：未找到测试图片 static/temp_image.png。请先放置一张图片用于测试。"}), 400
-        
-        with open(image_path, "rb") as image_file:
-            test_image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
+    image_path = os.path.join(app.static_folder, 'test_image.png')
+    if not os.path.exists(image_path):
+        return jsonify({"success": False, "message": "测试失败：未找到测试图片 static/test_image.png。请先放置一张图片用于测试。"}), 400
+    
+    with open(image_path, "rb") as image_file:
+        test_image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "这张图片里有什么？请用中文回答。"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_base64}"}}
-                ]
-            }
-        ]
-    else:
-        messages = [{"role": "user", "content": "Hello"}]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "请识别这张图片。如果图片中包含多个文字选项，请选择最核心或最突出的一个并只返回该选项的文本。如果图片是普通场景，请用一个简短的中文词语描述其核心内容。不要添加任何解释或标点。"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_base64}"}}
+            ]
+        }
+    ]
 
     json_data = {
         "model": model_name,
@@ -357,7 +351,17 @@ async def api_test_llm_connection():
             response = await client.post(chat_url, headers=headers, json=json_data, timeout=20)
             
             if response.status_code == 200:
-                return jsonify({"success": True, "message": f"连接成功 (状态码: {response.status_code})。API返回: {response.text}"})
+                try:
+                    api_response = response.json()
+                    content = api_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if content:
+                        message = f"识别成功。图中正确选项为：{content}"
+                    else:
+                        message = "连接成功，但未能从API响应中解析出识别结果。"
+                    return jsonify({"success": True, "message": message})
+                except Exception as e:
+                    logger.error(f"解析LLM API测试响应时出错: {e}", exc_info=True)
+                    return jsonify({"success": False, "message": f"连接成功，但解析API响应失败。原始返回: {response.text}"})
             else:
                 return jsonify({"success": False, "message": f"连接失败 (状态码: {response.status_code})。URL: {chat_url}, 错误信息: {response.text}"})
 

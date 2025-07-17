@@ -7,6 +7,15 @@
     <h2>LLM API 设置</h2>
     <p>在这里配置用于图片识别的LLM API。请确保您的模型支持图片输入。</p>
 
+    <div class="alert alert-info" role="alert">
+        <h4 class="alert-heading">配置提示</h4>
+        <ul>
+            <li>API URL 请填写基础地址 (Base URL)，例如 <code>https://api.example.com</code>。程序会自动在末尾拼接 <code>/v1</code>，请勿重复添加。</li>
+            <li>推荐使用 <code>gemini-2.5-flash-lite</code> 模型，它在速度和识别准确率上表现优异且成本较低。</li>
+            <li>请确保填写的 API Key 拥有调用所选模型的权限。</li>
+        </ul>
+    </div>
+
     <form method="POST" action="{{ url_for('llm_settings_page') }}">
         <div class="mb-3">
             <label for="api_url" class="form-label">API URL</label>
@@ -29,16 +38,20 @@
                 <button class="btn btn-outline-secondary" type="button" id="fetch-models-btn">获取模型列表</button>
             </div>
         </div>
-        <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" id="enabled" name="enabled" {% if llm_settings.enabled %}checked{% endif %}>
-            <label class="form-check-label" for="enabled">
-                启用图片识别功能
-            </label>
-        </div>
         <button type="submit" class="btn btn-primary">保存设置</button>
-        <button type="button" class="btn btn-secondary" id="test-llm-connection">测试连接</button>
+        <button type="button" class="btn btn-secondary" id="test-llm-connection">测试模型</button>
     </form>
-    <div id="test-result-area" class="mt-4"></div>
+    <div class="row mt-4">
+        <div class="col-md-5">
+            <h5>测试图片预览</h5>
+            <p>点击“测试模型”按钮时，将使用以下图片进行识别。</p>
+            <img src="{{ url_for('static', filename='test_image.png') }}" class="img-fluid rounded border" style="max-width: 100%;" alt="测试图片">
+        </div>
+        <div class="col-md-7">
+            <h5>测试结果</h5>
+            <div id="test-result-area" class="mt-2" style="min-height: 100px;"></div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -96,7 +109,7 @@ $(document).ready(function() {
         const btn = $(this);
         const resultArea = $('#test-result-area');
         
-        resultArea.html('<p class="text-info">正在测试连接，请稍候...</p>');
+        resultArea.html('<p class="text-info">正在测试模型，请稍候...</p>');
         btn.prop('disabled', true);
 
         $.ajax({
@@ -105,8 +118,7 @@ $(document).ready(function() {
             data: {
                 api_url: $('#api_url').val(),
                 api_key: $('#api_key').val(),
-                model_name: $('#model_name').val(),
-                enabled: $('#enabled').is(':checked')
+                model_name: $('#model_name').val()
             },
             dataType: 'json',
             success: function(response) {

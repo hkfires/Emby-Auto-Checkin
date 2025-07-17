@@ -22,8 +22,7 @@ def _get_default_config():
         "llm_settings": {
             "api_url": "",
             "api_key": "",
-            "model_name": "",
-            "enabled": False
+            "model_name": ""
         }
     }
     default_slot_id = 1
