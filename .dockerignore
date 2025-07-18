@@ -3,6 +3,7 @@ __pycache__
 .dockerignore
 .git
 .venv
+.conda
 data
 *.session
 *.json
