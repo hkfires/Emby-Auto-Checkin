@@ -1,4 +1,4 @@
-import asyncio, re, base64, httpx, io
+import asyncio, re, base64, httpx, io, json
 from telethon import events, errors
 from config import load_config
 
@@ -513,25 +513,48 @@ class VisionCaptchaStrategy(CheckinStrategy):
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                     ]
                 }
-            ]
+            ],
+            "stream": True
         }
 
         try:
             self.logger.info(f"用户 {self.nickname_for_logging}: 正在调用 Vision API。模型: {self.model_name}, 提示: {prompt_text}")
+            full_content = ""
             async with httpx.AsyncClient() as client:
                 chat_url = f"{self.base_api_url}/v1/chat/completions"
-                response = await client.post(chat_url, headers=headers, json=json_data, timeout=40)
-                response.raise_for_status()
-                api_response = response.json()
-                
-                content = api_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-                self.logger.info(f"用户 {self.nickname_for_logging}: Vision API 响应: {content}")
-                return {"success": True, "content": content.strip()}
+                async with client.stream("POST", chat_url, headers=headers, json=json_data, timeout=60) as response:
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        self.logger.error(f"用户 {self.nickname_for_logging}: 调用 Vision API 失败 (状态码: {response.status_code})。URL: {chat_url}, 错误信息: {error_text.decode()}")
+                        return {"success": False, "message": f"调用 Vision API 失败 (状态码: {response.status_code})。"}
+
+                    try:
+                        async for line in response.aiter_lines():
+                            if line.startswith('data: '):
+                                data_str = line[len('data: '):]
+                                if data_str.strip() == '[DONE]':
+                                    break
+                                try:
+                                    chunk = json.loads(data_str)
+                                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                    content_piece = delta.get("content")
+                                    if content_piece:
+                                        full_content += content_piece
+                                except json.JSONDecodeError:
+                                    self.logger.warning(f"用户 {self.nickname_for_logging}: 无法解析Vision API的SSE JSON数据: {data_str}")
+                                    continue
+                    except Exception as e:
+                        self.logger.error(f"用户 {self.nickname_for_logging}: 处理Vision API流式响应时出错: {e}", exc_info=True)
+                        return {"success": False, "message": f"处理流式响应时出错: {e}"}
+
+            self.logger.info(f"用户 {self.nickname_for_logging}: Vision API 完整响应: {full_content}")
+            return {"success": True, "content": full_content.strip()}
+
         except httpx.RequestError as e:
             self.logger.error(f"用户 {self.nickname_for_logging}: 调用 Vision API 失败: {e}")
             return {"success": False, "message": f"调用 Vision API 失败: {e}"}
         except Exception as e:
-            self.logger.error(f"用户 {self.nickname_for_logging}: 解析 Vision API 响应失败: {e}")
+            self.logger.error(f"用户 {self.nickname_for_logging}: 调用或解析 Vision API 响应时发生未知错误: {e}", exc_info=True)
             return {"success": False, "message": f"解析 Vision API 响应失败: {e}"}
 
     async def execute(self):

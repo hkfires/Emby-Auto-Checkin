@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
-import logging, os, re, threading, asyncio, httpx, base64
+import logging, os, re, threading, asyncio, httpx, base64, json
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from telethon import TelegramClient, errors
@@ -332,43 +332,58 @@ async def api_test_llm_connection():
 
     json_data = {
         "model": model_name,
-        "messages": messages
+        "messages": messages,
+        "stream": True
     }
 
     try:
+        full_content = ""
         async with httpx.AsyncClient() as client:
-            response = await client.post(chat_url, headers=headers, json=json_data, timeout=20)
-            
-            if response.status_code == 200:
+            async with client.stream("POST", chat_url, headers=headers, json=json_data, timeout=60) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    return jsonify({"success": False, "message": f"连接失败 (状态码: {response.status_code})。URL: {chat_url}, 错误信息: {error_text.decode()}"})
+
                 try:
-                    api_response = response.json()
-                    content = api_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    if content:
-                        if content.strip() == "路由器":
-                            config = load_config()
-                            llm_settings = config.get('llm_settings', {})
-                            llm_settings['api_url'] = base_api_url
-                            llm_settings['api_key'] = api_key
-                            llm_settings['model_name'] = model_name
-                            config['llm_settings'] = llm_settings
-                            save_config(config)
-                            
-                            message = f"测试成功。模型正确识别出了图片内容为：{content}"
-                            return jsonify({"success": True, "message": message})
-                        elif "不支持图片识别" in content:
-                            message = f"测试失败。模型不支持图片识别，返回结果：{content}"
-                            return jsonify({"success": False, "message": message})
-                        else:
-                            message = f"测试失败。模型返回了非预期的结果：{content}"
-                            return jsonify({"success": False, "message": message})
-                    else:
-                        message = "连接成功，但未能从API响应中解析出识别结果。"
-                        return jsonify({"success": False, "message": message})
+                    async for line in response.aiter_lines():
+                        if line.startswith('data: '):
+                            data_str = line[len('data: '):]
+                            if data_str.strip() == '[DONE]':
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                content_piece = delta.get("content")
+                                if content_piece:
+                                    full_content += content_piece
+                            except json.JSONDecodeError:
+                                logger.warning(f"无法解析SSE中的JSON数据: {data_str}")
+                                continue
                 except Exception as e:
-                    logger.error(f"解析LLM API测试响应时出错: {e}", exc_info=True)
-                    return jsonify({"success": False, "message": f"连接成功，但解析API响应失败。原始返回: {response.text}"})
+                    logger.error(f"处理LLM API流式响应时出错: {e}", exc_info=True)
+                    return jsonify({"success": False, "message": f"处理流式响应时出错: {e}"})
+
+        if full_content:
+            if full_content.strip() == "路由器":
+                config = load_config()
+                llm_settings = config.get('llm_settings', {})
+                llm_settings['api_url'] = base_api_url
+                llm_settings['api_key'] = api_key
+                llm_settings['model_name'] = model_name
+                config['llm_settings'] = llm_settings
+                save_config(config)
+                
+                message = f"测试成功。模型正确识别出了图片内容为：{full_content}"
+                return jsonify({"success": True, "message": message})
+            elif "不支持图片识别" in full_content:
+                message = f"测试失败。模型不支持图片识别，返回结果：{full_content}"
+                return jsonify({"success": False, "message": message})
             else:
-                return jsonify({"success": False, "message": f"连接失败 (状态码: {response.status_code})。URL: {chat_url}, 错误信息: {response.text}"})
+                message = f"测试失败。模型返回了非预期的结果：{full_content}"
+                return jsonify({"success": False, "message": message})
+        else:
+            message = "连接成功，但未能从API响应中解析出任何有效内容。"
+            return jsonify({"success": False, "message": message})
 
     except httpx.RequestError as e:
         logger.error(f"测试LLM API连接时发生请求错误: {e}", exc_info=True)
