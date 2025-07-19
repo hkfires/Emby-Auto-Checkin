@@ -93,18 +93,30 @@
             const area = document.getElementById(areaId);
             if (!area) return;
             area.innerHTML = '';
+
             const wrapper = document.createElement('div');
-            wrapper.innerHTML = [
-                `<div class="alert alert-${type} alert-dismissible" role="alert">`,
-                `   <div>${message}</div>`,
-                '   <button type="button" class="close" data-dismiss="alert" aria-label="Close">',
-                '       <span aria-hidden="true">&times;</span>',
-                '   </button>',
-                '</div>'
-            ].join('');
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.setAttribute('role', 'alert');
+
+            const messageDiv = document.createElement('div');
+            messageDiv.textContent = message;
+
+            const closeButton = document.createElement('button');
+            closeButton.type = 'button';
+            closeButton.className = 'close';
+            closeButton.setAttribute('data-dismiss', 'alert');
+            closeButton.setAttribute('aria-label', 'Close');
+            closeButton.innerHTML = '<span aria-hidden="true">&times;</span>';
+
+            alertDiv.appendChild(messageDiv);
+            alertDiv.appendChild(closeButton);
+            wrapper.appendChild(alertDiv);
+
             area.append(wrapper);
+
             setTimeout(() => {
-                $(wrapper.firstChild).alert('close');
+                $(alertDiv).alert('close');
             }, 5000);
         }
     </script>
