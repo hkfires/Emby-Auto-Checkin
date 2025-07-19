@@ -1011,23 +1011,25 @@ def api_add_task():
             if task_specific_time_slot:
                 slot_start_h = task_specific_time_slot.get('start_hour', 8)
                 slot_start_m = task_specific_time_slot.get('start_minute', 0)
+                slot_start_s = task_specific_time_slot.get('start_second', 0)
                 slot_end_h = task_specific_time_slot.get('end_hour', 22)
                 slot_end_m = task_specific_time_slot.get('end_minute', 0)
-                rand_h, rand_m = get_random_time_in_range(slot_start_h, slot_start_m, slot_end_h, slot_end_m)
+                slot_end_s = task_specific_time_slot.get('end_second', 0)
+                rand_h, rand_m, rand_s = get_random_time_in_range(slot_start_h, slot_start_m, slot_end_h, slot_end_m, slot_start_s, slot_end_s)
 
                 target_identifier = new_task.get('bot_username') or new_task.get('target_chat_id')
                 job_id_suffix = f"bot_{target_identifier}" if target_type == 'bot' else f"chat_{target_identifier}"
                 job_id = f"checkin_job_{user_telegram_id}_{job_id_suffix}"
 
                 scheduler.add_job(
-                    'run_scheduler:run_checkin_task',
-                    trigger=CronTrigger(hour=rand_h, minute=rand_m),
+                    'run_scheduler:run_checkin_task_sync',
+                    trigger=CronTrigger(hour=rand_h, minute=rand_m, second=rand_s),
                     args=[user_telegram_id, target_type, target_identifier, new_task],
                     id=job_id,
                     name=f"Task: {user_nickname} -> {log_target_name}",
                     replace_existing=True
                 )
-                logger.info(f"任务已添加并调度: 用户 {user_nickname} -> {log_target_name} at {rand_h:02d}:{rand_m:02d}")
+                logger.info(f"任务已添加并调度: 用户 {user_nickname} -> {log_target_name} at {rand_h:02d}:{rand_m:02d}:{rand_s:02d}")
                 return jsonify({"success": True, "message": "任务已添加并成功调度。"})
             else:
                 logger.error(f"无法为新任务 {log_target_name} 找到调度时间段。")

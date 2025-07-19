@@ -31,31 +31,32 @@
                     <input type="text" class="form-control" id="slot_{{ i }}_name" name="slot_{{ i }}_name" value="{{ slot.name | default('') }}" placeholder="例如: 上午签到">
                 </div>
             </div>
+            {% set col_class = 'col-md-3' if not root_mode else 'col-md-2' %}
             <div class="form-row">
-                <div class="form-group col-md-2">
+                <div class="form-group {{ col_class }}">
                     <label for="slot_{{ i }}_start_hour">开始小时</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_start_hour" name="slot_{{ i }}_start_hour" value="{{ slot.start_hour if slot.start_hour is not none else '8' }}" min="0" max="23">
                 </div>
-                <div class="form-group col-md-2">
+                <div class="form-group {{ col_class }}">
                     <label for="slot_{{ i }}_start_minute">开始分钟</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_start_minute" name="slot_{{ i }}_start_minute" value="{{ slot.start_minute if slot.start_minute is not none else '0' }}" min="0" max="59">
                 </div>
                 {% if root_mode %}
-                <div class="form-group col-md-2">
+                <div class="form-group {{ col_class }}">
                     <label for="slot_{{ i }}_start_second">开始秒</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_start_second" name="slot_{{ i }}_start_second" value="{{ slot.start_second | default(0) }}" min="0" max="59">
                 </div>
                 {% endif %}
-                <div class="form-group col-md-2">
+                <div class="form-group {{ col_class }}">
                     <label for="slot_{{ i }}_end_hour">结束小时</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_end_hour" name="slot_{{ i }}_end_hour" value="{{ slot.end_hour if slot.end_hour is not none else '12' }}" min="0" max="23">
                 </div>
-                <div class="form-group col-md-2">
+                <div class="form-group {{ col_class }}">
                     <label for="slot_{{ i }}_end_minute">结束分钟</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_end_minute" name="slot_{{ i }}_end_minute" value="{{ slot.end_minute if slot.end_minute is not none else '0' }}" min="0" max="59">
                 </div>
                 {% if root_mode %}
-                <div class="form-group col-md-2">
+                <div class="form-group {{ col_class }}">
                     <label for="slot_{{ i }}_end_second">结束秒</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_end_second" name="slot_{{ i }}_end_second" value="{{ slot.end_second | default(0) }}" min="0" max="59">
                 </div>

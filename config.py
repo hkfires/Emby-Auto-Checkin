@@ -111,6 +111,7 @@ def load_config():
         task.setdefault("last_scheduled_date", None)
         task.setdefault("scheduled_hour", None)
         task.setdefault("scheduled_minute", None)
+        task.setdefault("scheduled_second", None)
         
         if "selected_time_slot_id" not in task or migrated_to_slots_this_run:
             task["selected_time_slot_id"] = default_slot_id_for_tasks
