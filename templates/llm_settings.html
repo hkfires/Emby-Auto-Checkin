@@ -125,11 +125,8 @@ $(document).ready(function() {
                 const resultType = response.success ? 'success' : 'danger';
                 let resultMsg = `<strong>测试结果:</strong> ${response.message}`;
                 if (response.success) {
-                    resultMsg += '<br>设置已成功保存！页面即将刷新...';
-                    showAlert('设置已成功保存！页面即将刷新...', 'success');
-                    setTimeout(function() {
-                        location.reload();
-                    }, 2000);
+                    resultMsg += '<br>设置已成功保存！';
+                    showAlert('设置已成功保存！', 'success');
                 } else {
                     resultMsg += '<br><strong>请注意：LLM API 设置未保存！</strong>';
                     showAlert(`测试失败: ${response.message}`, 'danger');

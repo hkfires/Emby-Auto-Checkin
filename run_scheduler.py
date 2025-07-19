@@ -12,19 +12,20 @@ from scheduler_instance import scheduler
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def get_random_time_in_range(start_h, start_m, end_h, end_m):
-    start_total_minutes = start_h * 60 + start_m
-    end_total_minutes = end_h * 60 + end_m
+def get_random_time_in_range(start_h, start_m, end_h, end_m, start_s=0, end_s=0):
+    start_total_seconds = start_h * 3600 + start_m * 60 + start_s
+    end_total_seconds = end_h * 3600 + end_m * 60 + end_s
 
-    if start_total_minutes >= end_total_minutes:
-        logger.warning(f"无效的时间范围: {start_h}:{start_m} - {end_h}:{end_m}. 将使用开始时间。")
-        return start_h, start_m
+    if start_total_seconds >= end_total_seconds:
+        logger.warning(f"无效的时间范围: {start_h}:{start_m}:{start_s} - {end_h}:{end_m}:{end_s}. 将使用开始时间。")
+        return start_h, start_m, start_s
 
-    random_total_minutes = random.randint(start_total_minutes, end_total_minutes - 1)
+    random_total_seconds = random.randint(start_total_seconds, end_total_seconds - 1)
 
-    rand_h = random_total_minutes // 60
-    rand_m = random_total_minutes % 60
-    return rand_h, rand_m
+    rand_h = random_total_seconds // 3600
+    rand_m = (random_total_seconds % 3600) // 60
+    rand_s = random_total_seconds % 60
+    return rand_h, rand_m, rand_s
 
 async def run_checkin_task(user_telegram_id, target_type, target_identifier, task_config):
     config = load_config()
@@ -178,13 +179,15 @@ def reconcile_tasks():
                 continue
 
             slot_start_h, slot_start_m = task_specific_time_slot.get('start_hour', 8), task_specific_time_slot.get('start_minute', 0)
+            slot_start_s = task_specific_time_slot.get('start_second', 0)
             slot_end_h, slot_end_m = task_specific_time_slot.get('end_hour', 22), task_specific_time_slot.get('end_minute', 0)
-            rand_h, rand_m = get_random_time_in_range(slot_start_h, slot_start_m, slot_end_h, slot_end_m)
+            slot_end_s = task_specific_time_slot.get('end_second', 0)
+            rand_h, rand_m, rand_s = get_random_time_in_range(slot_start_h, slot_start_m, slot_end_h, slot_end_m, slot_start_s, slot_end_s)
             
             try:
                 scheduler.add_job(
                     run_checkin_task_sync,
-                    trigger=CronTrigger(hour=rand_h, minute=rand_m),
+                    trigger=CronTrigger(hour=rand_h, minute=rand_m, second=rand_s),
                     args=[user_telegram_id, target_type, target_identifier, task_entry],
                     id=job_id,
                     name=f"Task: {current_task_user_nickname} -> {display_target_name}",

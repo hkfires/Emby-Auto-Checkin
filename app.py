@@ -226,6 +226,8 @@ def api_settings_page():
 @login_required
 def scheduler_settings_page():
     config = load_config()
+    root_mode = 'root' in request.args or request.form.get('root_mode') == 'true'
+
     if request.method == 'POST':
         form_data = request.form.to_dict()
         
@@ -233,51 +235,70 @@ def scheduler_settings_page():
         for i in range(1, 4):
             slot_name = form_data.get(f'slot_{i}_name')
             if not slot_name or not slot_name.strip():
-                if any(form_data.get(f'slot_{i}_{field}') for field in ['start_hour', 'start_minute', 'end_hour', 'end_minute']):
+                fields_to_check = ['start_hour', 'start_minute', 'end_hour', 'end_minute']
+                if root_mode:
+                    fields_to_check.extend(['start_second', 'end_second'])
+                
+                if any(form_data.get(f'slot_{i}_{field}') for field in fields_to_check):
                     flash(f"时间段 {i} 的名称不能为空，如果不想使用该时段，请清空所有相关字段。", "warning")
                     return render_template('scheduler_settings.html',
                                            scheduler_enabled=config.get('scheduler_enabled'),
-                                           scheduler_time_slots=config.get('scheduler_time_slots', []))
+                                           scheduler_time_slots=config.get('scheduler_time_slots', []),
+                                           root_mode=root_mode)
                 continue
 
             try:
                 start_hour = int(form_data.get(f'slot_{i}_start_hour'))
                 start_minute = int(form_data.get(f'slot_{i}_start_minute'))
+                start_second = int(form_data.get(f'slot_{i}_start_second', 0)) if root_mode else 0
                 end_hour = int(form_data.get(f'slot_{i}_end_hour'))
                 end_minute = int(form_data.get(f'slot_{i}_end_minute'))
+                end_second = int(form_data.get(f'slot_{i}_end_second', 0)) if root_mode else 0
 
-                if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and \
-                        0 <= end_hour <= 23 and 0 <= end_minute <= 59):
-                    flash(f"时间段 {i} ('{slot_name}') 的时间值超出有效范围 (小时 0-23, 分钟 0-59)。", "danger")
+                if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and 0 <= start_second <= 59 and \
+                        0 <= end_hour <= 23 and 0 <= end_minute <= 59 and 0 <= end_second <= 59):
+                    flash(f"时间段 {i} ('{slot_name}') 的时间值超出有效范围 (小时 0-23, 分钟/秒 0-59)。", "danger")
                     return render_template('scheduler_settings.html',
                                            scheduler_enabled=config.get('scheduler_enabled'),
-                                           scheduler_time_slots=config.get('scheduler_time_slots', []))
+                                           scheduler_time_slots=config.get('scheduler_time_slots', []),
+                                           root_mode=root_mode)
 
-                if start_hour * 60 + start_minute >= end_hour * 60 + end_minute:
+                start_total_seconds = start_hour * 3600 + start_minute * 60 + start_second
+                end_total_seconds = end_hour * 3600 + end_minute * 60 + end_second
+
+                if start_total_seconds >= end_total_seconds:
                     flash(f"时间段 {i} ('{slot_name}') 的结束时间必须晚于开始时间。", "danger")
                     return render_template('scheduler_settings.html',
                                            scheduler_enabled=config.get('scheduler_enabled'),
-                                           scheduler_time_slots=config.get('scheduler_time_slots', []))
+                                           scheduler_time_slots=config.get('scheduler_time_slots', []),
+                                           root_mode=root_mode)
                 
-                new_scheduler_time_slots.append({
+                slot_data = {
                     "id": len(new_scheduler_time_slots) + 1,
                     "name": slot_name.strip(),
                     "start_hour": start_hour,
                     "start_minute": start_minute,
                     "end_hour": end_hour,
                     "end_minute": end_minute
-                })
+                }
+                if root_mode:
+                    slot_data["start_second"] = start_second
+                    slot_data["end_second"] = end_second
+                new_scheduler_time_slots.append(slot_data)
+
             except (ValueError, TypeError):
                 flash(f"时间段 {i} ('{slot_name}') 的时间格式无效。请输入有效的数字。", "danger")
                 return render_template('scheduler_settings.html',
                                        scheduler_enabled=config.get('scheduler_enabled'),
-                                       scheduler_time_slots=config.get('scheduler_time_slots', []))
+                                       scheduler_time_slots=config.get('scheduler_time_slots', []),
+                                       root_mode=root_mode)
         
         if not new_scheduler_time_slots and form_data.get('scheduler_enabled') == 'on':
             flash("调度器已启用，但未配置任何有效的时间段。请至少配置一个时间段。", "warning")
             return render_template('scheduler_settings.html',
                                    scheduler_enabled=True,
-                                   scheduler_time_slots=[])
+                                   scheduler_time_slots=[],
+                                   root_mode=root_mode)
 
         config['scheduler_enabled'] = True if form_data.get('scheduler_enabled') == 'on' else False
         config['scheduler_time_slots'] = new_scheduler_time_slots
@@ -289,7 +310,8 @@ def scheduler_settings_page():
 
     return render_template('scheduler_settings.html',
                            scheduler_enabled=config.get('scheduler_enabled'),
-                           scheduler_time_slots=config.get('scheduler_time_slots', []))
+                           scheduler_time_slots=config.get('scheduler_time_slots', []),
+                           root_mode=root_mode)
 
 @app.route('/settings/llm', methods=['GET', 'POST'])
 @login_required

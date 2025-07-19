@@ -5,6 +5,9 @@
 {% block content %}
 <h2>自动签到设置</h2>
 <form method="POST" action="{{ url_for('scheduler_settings_page') }}">
+    {% if root_mode %}
+        <input type="hidden" name="root_mode" value="true">
+    {% endif %}
     <div class="form-group form-check">
         <input type="checkbox" class="form-check-input" id="scheduler_enabled" name="scheduler_enabled" {% if scheduler_enabled %}checked{% endif %}>
         <label class="form-check-label" for="scheduler_enabled">启用每日自动签到</label>
@@ -29,22 +32,34 @@
                 </div>
             </div>
             <div class="form-row">
-                <div class="form-group col-md-3">
-                    <label for="slot_{{ i }}_start_hour">开始小时 (0-23)</label>
+                <div class="form-group col-md-2">
+                    <label for="slot_{{ i }}_start_hour">开始小时</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_start_hour" name="slot_{{ i }}_start_hour" value="{{ slot.start_hour if slot.start_hour is not none else '8' }}" min="0" max="23">
                 </div>
-                <div class="form-group col-md-3">
-                    <label for="slot_{{ i }}_start_minute">开始分钟 (0-59)</label>
+                <div class="form-group col-md-2">
+                    <label for="slot_{{ i }}_start_minute">开始分钟</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_start_minute" name="slot_{{ i }}_start_minute" value="{{ slot.start_minute if slot.start_minute is not none else '0' }}" min="0" max="59">
                 </div>
-                <div class="form-group col-md-3">
-                    <label for="slot_{{ i }}_end_hour">结束小时 (0-23)</label>
+                {% if root_mode %}
+                <div class="form-group col-md-2">
+                    <label for="slot_{{ i }}_start_second">开始秒</label>
+                    <input type="number" class="form-control" id="slot_{{ i }}_start_second" name="slot_{{ i }}_start_second" value="{{ slot.start_second | default(0) }}" min="0" max="59">
+                </div>
+                {% endif %}
+                <div class="form-group col-md-2">
+                    <label for="slot_{{ i }}_end_hour">结束小时</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_end_hour" name="slot_{{ i }}_end_hour" value="{{ slot.end_hour if slot.end_hour is not none else '12' }}" min="0" max="23">
                 </div>
-                <div class="form-group col-md-3">
-                    <label for="slot_{{ i }}_end_minute">结束分钟 (0-59)</label>
+                <div class="form-group col-md-2">
+                    <label for="slot_{{ i }}_end_minute">结束分钟</label>
                     <input type="number" class="form-control" id="slot_{{ i }}_end_minute" name="slot_{{ i }}_end_minute" value="{{ slot.end_minute if slot.end_minute is not none else '0' }}" min="0" max="59">
                 </div>
+                {% if root_mode %}
+                <div class="form-group col-md-2">
+                    <label for="slot_{{ i }}_end_second">结束秒</label>
+                    <input type="number" class="form-control" id="slot_{{ i }}_end_second" name="slot_{{ i }}_end_second" value="{{ slot.end_second | default(0) }}" min="0" max="59">
+                </div>
+                {% endif %}
             </div>
             <p class="text-muted"><small>请确保结束时间晚于开始时间。如果此时间段名称留空，则此时间段的设置将被忽略。</small></p>
         </div>
