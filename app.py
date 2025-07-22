@@ -256,7 +256,7 @@ def scheduler_settings_page():
                 end_second = int(form_data.get(f'slot_{i}_end_second', 0)) if root_mode else 0
 
                 if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and 0 <= start_second <= 59 and \
-                        0 <= end_hour <= 23 and 0 <= end_minute <= 59 and 0 <= end_second <= 59):
+                        0 <= end_hour <= 24 and 0 <= end_minute <= 59 and 0 <= end_second <= 59):
                     flash(f"时间段 {i} ('{slot_name}') 的时间值超出有效范围 (小时 0-23, 分钟/秒 0-59)。", "danger")
                     return render_template('scheduler_settings.html',
                                            scheduler_enabled=config.get('scheduler_enabled'),
@@ -266,12 +266,6 @@ def scheduler_settings_page():
                 start_total_seconds = start_hour * 3600 + start_minute * 60 + start_second
                 end_total_seconds = end_hour * 3600 + end_minute * 60 + end_second
 
-                if start_total_seconds >= end_total_seconds:
-                    flash(f"时间段 {i} ('{slot_name}') 的结束时间必须晚于开始时间。", "danger")
-                    return render_template('scheduler_settings.html',
-                                           scheduler_enabled=config.get('scheduler_enabled'),
-                                           scheduler_time_slots=config.get('scheduler_time_slots', []),
-                                           root_mode=root_mode)
                 
                 slot_data = {
                     "id": len(new_scheduler_time_slots) + 1,

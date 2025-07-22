@@ -17,10 +17,23 @@ def get_random_time_in_range(start_h, start_m, end_h, end_m, start_s=0, end_s=0)
     end_total_seconds = end_h * 3600 + end_m * 60 + end_s
 
     if start_total_seconds >= end_total_seconds:
-        logger.warning(f"无效的时间范围: {start_h}:{start_m}:{start_s} - {end_h}:{end_m}:{end_s}. 将使用开始时间。")
-        return start_h, start_m, start_s
+        day_end_seconds = 24 * 3600
+        first_part_duration = day_end_seconds - start_total_seconds
+        second_part_duration = end_total_seconds
+        total_duration = first_part_duration + second_part_duration
 
-    random_total_seconds = random.randint(start_total_seconds, end_total_seconds - 1)
+        if total_duration <= 0:
+            logger.warning(f"无效的时间范围: {start_h}:{start_m}:{start_s} - {end_h}:{end_m}:{end_s}. 总时长为0或负数。")
+            return start_h, start_m, start_s
+
+        random_point = random.randint(0, total_duration - 1)
+
+        if random_point < first_part_duration:
+            random_total_seconds = start_total_seconds + random_point
+        else:
+            random_total_seconds = random_point - first_part_duration
+    else:
+        random_total_seconds = random.randint(start_total_seconds, end_total_seconds - 1)
 
     rand_h = random_total_seconds // 3600
     rand_m = (random_total_seconds % 3600) // 60
