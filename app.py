@@ -1,15 +1,15 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
-import logging, os, re, threading, asyncio, httpx, base64, json
+import logging, os, threading, asyncio, httpx, base64, json
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date, datetime
-from config import load_config, save_config
+from config import load_config, save_config, migrate_session_names
 from log import save_daily_checkin_log, init_log_db, load_checkin_log_by_date
 from apscheduler.triggers.cron import CronTrigger
 from scheduler_instance import scheduler
 from run_scheduler import get_random_time_in_range
 from utils.common import format_datetime_filter, get_masked_api_credentials, get_processed_bots_list, update_api_credential
-from utils.tg_service_api import execute_action, manage_session
+from utils.tg_service_api import execute_action, manage_session, resolve_chat_identifier
 from checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
+
+migrate_session_names()
 
 app = Flask(__name__)
 config = load_config()
@@ -442,11 +444,8 @@ def users_page():
 @app.route('/api/users/add', methods=['POST'])
 async def api_add_user():
     config = load_config()
-    api_id = config.get('api_id')
-    api_hash = config.get('api_hash')
-
-    if not api_id or not api_hash:
-        return jsonify({"success": False, "message": "请先设置API ID和API Hash。"}), 400
+    if not config.get('api_id') or not config.get('api_hash'):
+        return jsonify({"success": False, "message": "请先在API设置中配置API ID和Hash。"}), 400
 
     phone = request.form.get('phone')
     if not phone:
@@ -454,32 +453,59 @@ async def api_add_user():
 
     if any(u.get('phone') == phone for u in config.get('users', [])):
         return jsonify({"success": False, "message": "该手机号码已经添加过。"}), 400
-    
-    if phone in temp_otp_store and temp_otp_store[phone].get('hash'):
-        return jsonify({"success": True, "message": "该手机号已发送验证码，请直接输入验证码。", "needs_otp": True, "phone": phone, "status": "requires_otp"})
 
-    return jsonify({"success": False, "message": "添加用户功能正在重构中，暂不可用。"}), 503
+    from utils.tg_service_api import send_code
+    result = await send_code(phone)
+
+    if result.get("success"):
+        temp_otp_store[phone] = {"hash": result.get("phone_code_hash")}
+        return jsonify({"success": True, "message": "验证码已发送，请输入验证码。", "needs_otp": True, "phone": phone})
+    else:
+        return jsonify({"success": False, "message": result.get("message", "发送验证码失败。")}), 500
 
 @app.route('/api/users/submit_otp', methods=['POST'])
 async def api_submit_otp():
-    config = load_config()
-    api_id = config.get('api_id')
-    api_hash = config.get('api_hash')
-
     phone = request.form.get('phone')
     otp_code = request.form.get('otp_code')
+    password = request.form.get('password') 
 
     if not phone or not otp_code:
         return jsonify({"success": False, "message": "未提供手机号或验证码。"}), 400
 
     otp_data = temp_otp_store.get(phone)
-    if not otp_data or 'hash' not in otp_data or 'session_name' not in otp_data:
-        return jsonify({"success": False, "message": "无法验证OTP：未找到之前的请求、已超时或请求数据不完整。请重新尝试添加用户。"}), 400
+    if not otp_data or 'hash' not in otp_data:
+        return jsonify({"success": False, "message": "无法验证OTP：未找到之前的请求或请求已超时。"}), 400
     
     phone_code_hash = otp_data['hash']
-    otp_flow_session_name = otp_data['session_name']
 
-    return jsonify({"success": False, "message": "提交OTP功能正在重构中，暂不可用。"}), 503
+    from utils.tg_service_api import sign_in
+    result = await sign_in(phone, otp_code, phone_code_hash, password)
+
+    if result.get("success"):
+        config = load_config()
+        user_info = result.get("user_info")
+        
+        if not any(u.get('telegram_id') == user_info.get('telegram_id') for u in config.get('users', [])):
+            new_user_data = {
+                "telegram_id": user_info.get("telegram_id"),
+                "nickname": user_info.get("nickname"),
+                "phone": user_info.get("phone"),
+                "session_name": user_info.get("session_name"),
+                "status": "logged_in"
+            }
+            config['users'].append(new_user_data)
+            save_config(config)
+            
+        if phone in temp_otp_store:
+            del temp_otp_store[phone]
+            
+        return jsonify({"success": True, "message": "登录成功！"})
+        
+    elif result.get("status") == "2fa_needed":
+        return jsonify({"success": False, "status": "2fa_needed", "message": "需要两步验证密码。"})
+        
+    else:
+        return jsonify({"success": False, "message": result.get("message", "登录失败。")}), 500
 
 @app.route('/api/users/delete', methods=['POST'])
 async def api_delete_user():
@@ -568,7 +594,7 @@ async def chats():
                     flash(f"用户 '{user_nickname_for_解析}' 的会话名称未找到，可能需要重新登录该用户。", 'danger')
                 else:
                     logger.info(f"尝试解析群组: ID/Link='{chat_identifier}', 使用用户='{user_nickname_for_解析}' (会话: {user_session_name})")
-                    resolved_data = await resolve_chat_identifier(api_id, api_hash, user_session_name, chat_identifier, user_nickname_for_解析)
+                    resolved_data = await resolve_chat_identifier(user_session_name, chat_identifier)
                     
                     if resolved_data.get("success"):
                         chat_id = resolved_data["id"]
@@ -932,8 +958,8 @@ def api_delete_task():
             job_id_suffix = f"bot_{identifier}" if target_type == 'bot' else f"chat_{identifier}"
             job_id = f"checkin_job_{user_telegram_id}_{job_id_suffix}"
             if scheduler.get_job(job_id):
-                scheduler.remove_job(job_id)
-                logger.info(f"已从调度器中移除任务: {job_id}")
+                scheduler.remove_job(job.id)
+                logger.info(f"已从调度器中移除任务: {job.id}")
             else:
                 logger.warning(f"尝试删除任务 {job_id}，但在调度器中未找到。")
         except Exception as e:
@@ -975,7 +1001,6 @@ async def api_manual_action():
     session_name_from_config = user_config.get('session_name')
     if not session_name_from_config:
         return jsonify({"success": False, "message": f"用户 {user_nickname} 缺少 session_name 配置。"}), 400
-    session_name = os.path.basename(session_name_from_config)
     user_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}")
     
     target_config_item = None
@@ -1016,7 +1041,7 @@ async def api_manual_action():
             return jsonify({"success": False, "message": "群组ID必须是数字。"}), 400
 
     result = await execute_action(
-        session_name=session_name,
+        session_name=session_name_from_config,
         target_entity_identifier=target_entity_identifier,
         strategy_id=effective_strategy_id,
         task_config=task_for_manual_action
@@ -1087,6 +1112,14 @@ async def api_execute_all_tasks_internal(source="http_manual_all"):
             target_type = "chat"
             log_target_name = target_config_item.get('chat_title', str(task_config_entry['target_chat_id'])) if target_config_item else str(task_config_entry['target_chat_id'])
         
+        eff_strat_id = "未知"
+        if target_config_item:
+            eff_strat_id = task_config_entry.get('strategy_identifier') or \
+                           target_config_item.get('strategy') or \
+                           target_config_item.get('strategy_identifier') or \
+                           "未知"
+        strategy_display = get_strategy_display_name(eff_strat_id)
+
         if not user_config or user_config.get('status') != 'logged_in':
             current_task_result = {"success": False, "message": f"用户 {user_nickname} 未登录或配置不正确。"}
         elif not target_config_item:
@@ -1096,32 +1129,22 @@ async def api_execute_all_tasks_internal(source="http_manual_all"):
             if not session_name_from_config:
                 current_task_result = {"success": False, "message": f"用户 {user_nickname} 缺少 session_name 配置。"}
             else:
-                session_name = os.path.basename(session_name_from_config)
-            target_entity_identifier = task_config_entry.get('bot_username') or task_config_entry.get('target_chat_id')
-            eff_strat_id = task_config_entry.get('strategy_identifier') or \
-                           target_config_item.get('strategy') if target_config_item and 'strategy' in target_config_item else \
-                           target_config_item.get('strategy_identifier') if target_config_item and 'strategy_identifier' in target_config_item else "未知"
-
-            current_task_result = await execute_action(
-                session_name=session_name,
-                target_entity_identifier=target_entity_identifier,
-                strategy_id=eff_strat_id,
-                task_config=task_config_entry
-            )
-
-        eff_strat_id = task_config_entry.get('strategy_identifier') or \
-                       target_config_item.get('strategy') if target_config_item and 'strategy' in target_config_item else \
-                       target_config_item.get('strategy_identifier') if target_config_item and 'strategy_identifier' in target_config_item else "未知"
-        strategy_display = get_strategy_display_name(eff_strat_id)
+                target_entity_identifier = task_config_entry.get('bot_username') or task_config_entry.get('target_chat_id')
+                current_task_result = await execute_action(
+                    session_name=session_name_from_config,
+                    target_entity_identifier=target_entity_identifier,
+                    strategy_id=eff_strat_id,
+                    task_config=task_config_entry
+                )
 
         results_list.append({
-            "task": {"user_nickname": user_nickname, "target_type": target_type, "target_name": log_target_name, "strategy_used_display": strategy_display}, 
+            "task": {"user_nickname": user_nickname, "target_type": target_type, "target_name": log_target_name, "strategy_used_display": strategy_display},
             "result": current_task_result
         })
     
         log_entry = {
             "checkin_type": f"批量手动操作 ({strategy_display})",
-            "user_nickname": user_nickname, 
+            "user_nickname": user_nickname,
             "target_type": target_type,
             "target_name": log_target_name,
             "success": current_task_result.get("success"),

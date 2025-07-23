@@ -8,14 +8,49 @@ DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
 
 import sys
 sys.path.append(PROJECT_ROOT)
-from config import load_config, save_config
+from config import load_config
 
 logger = logging.getLogger(__name__)
 
 class ClientManager:
     def __init__(self):
         self._clients = {}
+        self._temp_login_clients = {}
         self.config = load_config()
+
+    def create_temp_login_client(self, phone_number: str):
+        if phone_number in self._temp_login_clients:
+            return self._temp_login_clients[phone_number]
+
+        api_id = self.config.get('api_id')
+        api_hash = self.config.get('api_hash')
+        
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(DATA_DIR)
+            temp_session_name = f"temp_login_{phone_number}_{os.urandom(4).hex()}"
+            client = TelegramClient(temp_session_name, api_id, api_hash)
+            self._temp_login_clients[phone_number] = client
+            return client
+        finally:
+            os.chdir(original_cwd)
+
+    def get_temp_login_client(self, phone_number: str):
+        return self._temp_login_clients.get(phone_number)
+
+    async def remove_temp_login_client(self, phone_number: str):
+        client = self._temp_login_clients.pop(phone_number, None)
+        if client:
+            if client.is_connected():
+                await client.disconnect()
+            
+            session_file = f"{client.session.filename}"
+            if os.path.exists(session_file):
+                try:
+                    os.remove(session_file)
+                    logger.info(f"已删除临时会话文件: {session_file}")
+                except OSError as e:
+                    logger.error(f"删除临时会话文件 {session_file} 时出错: {e}")
 
     async def initialize_clients(self):
         logger.info("正在初始化所有Telegram客户端...")
@@ -28,9 +63,9 @@ class ClientManager:
 
         for user in self.config.get('users', []):
             if user.get('status') == 'logged_in' and user.get('session_name'):
-                clean_session_name = os.path.basename(user['session_name'])
+                session_name = user['session_name']
                 nickname = user.get('nickname', '未知用户')
-                await self.add_or_update_client(clean_session_name, api_id, api_hash, nickname)
+                await self.add_or_update_client(session_name, api_id, api_hash, nickname)
 
     async def add_or_update_client(self, session_name, api_id, api_hash, nickname):
         if session_name in self._clients and self._clients[session_name]['client'].is_connected():
@@ -76,12 +111,22 @@ class ClientManager:
         if session_name in self._clients:
             data = self._clients.pop(session_name)
             client = data.get("client")
-            if client and client.is_connected():
-                try:
-                    await client.disconnect()
-                    logger.info(f"会话 {session_name} 已成功断开并移除。")
-                except Exception as e:
-                    logger.error(f"断开会话 {session_name} 时发生错误: {e}")
+            if client:
+                if client.is_connected():
+                    try:
+                        await client.disconnect()
+                        logger.info(f"会话 {session_name} 已成功断开。")
+                    except Exception as e:
+                        logger.error(f"断开会话 {session_name} 时发生错误: {e}")
+                
+                session_file_path = os.path.join(DATA_DIR, f"{session_name}.session")
+                if os.path.exists(session_file_path):
+                    try:
+                        os.remove(session_file_path)
+                        logger.info(f"会话文件 {session_file_path} 已成功删除。")
+                    except OSError as e:
+                        logger.error(f"删除会话文件 {session_file_path} 时出错: {e}")
+            logger.info(f"会话 {session_name} 已从管理器中移除。")
             return True
         else:
             logger.warning(f"尝试移除一个不存在的会话: {session_name}")

@@ -126,3 +126,18 @@ def save_config(config_data):
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+def migrate_session_names():
+    config = load_config()
+    migrated = False
+    for user in config.get('users', []):
+        session_name = user.get('session_name')
+        if session_name and ('/' in session_name or '\\' in session_name):
+            base_name = os.path.basename(session_name)
+            clean_name = os.path.splitext(base_name)[0]
+            user['session_name'] = clean_name
+            migrated = True
+    
+    if migrated:
+        save_config(config)
+        print("Configuration updated: Session names have been migrated to the new format.")
