@@ -2,16 +2,14 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, f
 import logging, os, re, threading, asyncio, httpx, base64, json
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from telethon import TelegramClient, errors
 from datetime import date, datetime
 from config import load_config, save_config
-from telegram_client import get_session_name, resolve_chat_identifier
 from log import save_daily_checkin_log, init_log_db, load_checkin_log_by_date
 from apscheduler.triggers.cron import CronTrigger
 from scheduler_instance import scheduler
-from actions import execute_telegram_action_wrapper
 from run_scheduler import get_random_time_in_range
-from utils import format_datetime_filter, get_masked_api_credentials, get_processed_bots_list, update_api_credential
+from utils.common import format_datetime_filter, get_masked_api_credentials, get_processed_bots_list, update_api_credential
+from utils.tg_service_api import execute_action, manage_session
 from checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -460,49 +458,7 @@ async def api_add_user():
     if phone in temp_otp_store and temp_otp_store[phone].get('hash'):
         return jsonify({"success": True, "message": "该手机号已发送验证码，请直接输入验证码。", "needs_otp": True, "phone": phone, "status": "requires_otp"})
 
-    temp_otp_flow_session_name = os.path.join(DATA_DIR, f"otp_flow_{re.sub(r'[^0-9a-zA-Z]', '', phone)}")
-    client = TelegramClient(temp_otp_flow_session_name, api_id, api_hash)
-    message = "发送验证码时发生未知错误。"
-    needs_otp = False
-    
-    try:
-        logger.info(f"尝试为手机号 {phone} 发送验证码 (使用临时会话: {temp_otp_flow_session_name})。")
-        await client.connect()
-        
-        formatted_phone = phone if phone.startswith('+') else '+' + phone.lstrip('0')
-
-        sent_code = await client.send_code_request(formatted_phone)
-        temp_otp_store[phone] = {
-            "hash": sent_code.phone_code_hash,
-            "session_name": temp_otp_flow_session_name 
-        }
-        needs_otp = True
-        message = "验证码已发送，请输入验证码。"
-        logger.info(f"手机号 {phone}: 验证码已发送。Phone code hash: {sent_code.phone_code_hash}, 会话: {temp_otp_flow_session_name}")
-        
-        return jsonify({"success": True, "message": message, "needs_otp": needs_otp, "phone": phone, "status": "requires_otp"})
-
-    except errors.PhoneNumberInvalidError:
-        message = "无效的手机号码。"
-        logger.error(f"手机号 {phone}: {message}")
-        return jsonify({"success": False, "message": message}), 400
-    except errors.ApiIdInvalidError: 
-        message = "无效的 API ID / API Hash。"
-        logger.error(f"手机号 {phone}: {message}")
-        return jsonify({"success": False, "message": message}), 500
-    except Exception as e:
-        message = f"发送验证码时出错: {str(e)}"
-        logger.error(f"手机号 {phone}: {message}")
-        if os.path.exists(f"{temp_otp_flow_session_name}.session"):
-            try:
-                os.remove(f"{temp_otp_flow_session_name}.session")
-                logger.info(f"已清理OTP流程中出错的临时会话文件: {temp_otp_flow_session_name}.session")
-            except Exception as e_clean:
-                logger.error(f"清理OTP流程中出错的临时会话文件失败: {e_clean}")
-        return jsonify({"success": False, "message": message}), 500
-    finally:
-        if client and client.is_connected():
-            await client.disconnect()
+    return jsonify({"success": False, "message": "添加用户功能正在重构中，暂不可用。"}), 503
 
 @app.route('/api/users/submit_otp', methods=['POST'])
 async def api_submit_otp():
@@ -523,115 +479,10 @@ async def api_submit_otp():
     phone_code_hash = otp_data['hash']
     otp_flow_session_name = otp_data['session_name']
 
-    client = TelegramClient(otp_flow_session_name, api_id, api_hash)
-    user_status = "otp_failed"
-    message = "OTP验证失败。"
-    final_nickname_for_response = None
-
-    try:
-        logger.info(f"尝试为手机号 {phone} 提交OTP (使用会话: {otp_flow_session_name})。")
-        await client.connect()
-        
-        formatted_phone = phone if phone.startswith('+') else '+' + phone.lstrip('0')
-        
-        await client.sign_in(phone=formatted_phone, code=otp_code, phone_code_hash=phone_code_hash)
-
-        if await client.is_user_authorized():
-            me = await client.get_me()
-            
-            telegram_id = me.id
-            telegram_username = me.username
-            telegram_first_name = me.first_name
-            telegram_last_name = me.last_name
-            actual_phone = me.phone
-
-            if telegram_username:
-                base_nickname = telegram_username
-            elif telegram_first_name and telegram_last_name:
-                base_nickname = f"{telegram_first_name}_{telegram_last_name}"
-            elif telegram_first_name:
-                base_nickname = telegram_first_name
-            else:
-                base_nickname = f"user_{telegram_id}"
-            
-            final_nickname = base_nickname
-            count = 1
-            if 'users' not in config or not isinstance(config['users'], list):
-                config['users'] = []
-            while any(u.get('nickname') == final_nickname for u in config['users']):
-                final_nickname = f"{base_nickname}_{count}"
-                count += 1
-            
-            final_nickname_for_response = final_nickname
-            final_session_name_for_system = os.path.join(DATA_DIR, get_session_name(final_nickname))
-            
-            await client.disconnect()
-            client = None 
-
-            old_session_path = f"{otp_flow_session_name}.session"
-            new_session_path = f"{final_session_name_for_system}.session"
-
-            if os.path.exists(old_session_path):
-                os.rename(old_session_path, new_session_path)
-                logger.info(f"会话文件已从 {old_session_path} 重命名为 {new_session_path}")
-            else:
-                logger.warning(f"OTP流程的临时会话文件 {old_session_path} 未找到，无法重命名。")
-
-            new_user_entry = {
-                "nickname": final_nickname,
-                "telegram_id": telegram_id,
-                "telegram_username": telegram_username,
-                "telegram_first_name": telegram_first_name,
-                "telegram_last_name": telegram_last_name,
-                "phone": actual_phone, 
-                "session_name": final_session_name_for_system,
-                "status": "logged_in"
-            }
-            
-            config['users'].append(new_user_entry)
-            save_config(config)
-            
-            user_status = "logged_in"
-            message = f"用户 {final_nickname} 添加并登录成功！"
-            logger.info(f"用户 {final_nickname} (手机号: {actual_phone}) 添加成功。")
-
-        else: 
-            message = "OTP已提交，但用户仍未授权。"
-            logger.warning(f"手机号 {phone}: {message}")
-
-    except errors.PhoneCodeInvalidError:
-        message = "无效的验证码。"
-        logger.error(f"手机号 {phone}: {message}")
-    except errors.SessionPasswordNeededError:
-        message = "此账户需要两步验证密码，当前不支持。"
-        user_status = "2fa_needed" 
-        logger.error(f"手机号 {phone}: {message}")
-    except errors.PhoneCodeExpiredError:
-        message = "验证码已过期，请重新尝试添加用户以获取新的验证码。"
-        logger.error(f"手机号 {phone}: {message}")
-        user_status = "otp_expired"
-    except Exception as e:
-        message = f"OTP验证或用户添加时出错: {str(e)}"
-        logger.error(f"手机号 {phone}: {message} ({type(e)})")
-    finally:
-        if client and client.is_connected():
-            await client.disconnect()
-        
-        otp_session_file_path = f"{otp_flow_session_name}.session"
-        if user_status != "logged_in" and os.path.exists(otp_session_file_path):
-            try:
-                os.remove(otp_session_file_path)
-                logger.info(f"已清理OTP失败/过期的临时会话文件: {otp_session_file_path}")
-            except Exception as e_clean:
-                logger.error(f"清理OTP失败/过期的临时会话文件失败: {e_clean}")
-        
-        if phone in temp_otp_store:
-            del temp_otp_store[phone]
-
-    return jsonify({"success": user_status == "logged_in", "message": message, "status": user_status, "nickname": final_nickname_for_response if user_status == "logged_in" else None})
+    return jsonify({"success": False, "message": "提交OTP功能正在重构中，暂不可用。"}), 503
 
 @app.route('/api/users/delete', methods=['POST'])
-def api_delete_user():
+async def api_delete_user():
     config = load_config()
     nickname_to_delete = request.form.get('nickname')
     if not nickname_to_delete:
@@ -645,6 +496,7 @@ def api_delete_user():
         return jsonify({"success": False, "message": "未找到该昵称的用户。"}), 404
 
     user_telegram_id_to_delete = user_to_delete_obj.get('telegram_id')
+    session_name_to_delete = user_to_delete_obj.get('session_name')
 
     config['users'] = [u for u in config.get('users', []) if u.get('nickname') != nickname_to_delete]
     
@@ -654,13 +506,10 @@ def api_delete_user():
             if task.get('user_telegram_id') != user_telegram_id_to_delete
         ]
 
-    session_file_to_delete = os.path.join(DATA_DIR, f"{get_session_name(nickname_to_delete)}.session")
-    if os.path.exists(session_file_to_delete):
-        try:
-            os.remove(session_file_to_delete)
-            logger.info(f"已删除会话文件: {session_file_to_delete}")
-        except OSError as e:
-            logger.error(f"删除会话文件 {session_file_to_delete} 失败: {e}")
+    if session_name_to_delete:
+        result = await manage_session(action="remove", session_name=session_name_to_delete, nickname=nickname_to_delete)
+        if not result.get("success"):
+            logger.warning(f"调用TG服务移除会话 {session_name_to_delete} 失败: {result.get('message')}")
 
     if len(config.get('users', [])) < original_user_count:
         save_config(config)
@@ -1123,7 +972,10 @@ async def api_manual_action():
     if not user_config:
         return jsonify({"success": False, "message": f"用户TG ID '{user_telegram_id}' 未找到或未登录。"}), 400
 
-    session_name = user_config.get('session_name')
+    session_name_from_config = user_config.get('session_name')
+    if not session_name_from_config:
+        return jsonify({"success": False, "message": f"用户 {user_nickname} 缺少 session_name 配置。"}), 400
+    session_name = os.path.basename(session_name_from_config)
     user_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}")
     
     target_config_item = None
@@ -1156,7 +1008,19 @@ async def api_manual_action():
                             target_config_item.get('strategy_identifier', '未知')
     strategy_display = get_strategy_display_name(effective_strategy_id)
     
-    result = await execute_telegram_action_wrapper(api_id, api_hash, user_nickname, session_name, target_config_item, task_for_manual_action)
+    target_entity_identifier = identifier
+    if target_type == 'chat':
+        try:
+            target_entity_identifier = int(identifier)
+        except ValueError:
+            return jsonify({"success": False, "message": "群组ID必须是数字。"}), 400
+
+    result = await execute_action(
+        session_name=session_name,
+        target_entity_identifier=target_entity_identifier,
+        strategy_id=effective_strategy_id,
+        task_config=task_for_manual_action
+    )
 
     log_entry = {
         "checkin_type": f"手动操作 ({strategy_display})",
@@ -1228,8 +1092,22 @@ async def api_execute_all_tasks_internal(source="http_manual_all"):
         elif not target_config_item:
             current_task_result = {"success": False, "message": f"目标 {log_target_name} ({target_type}) 未在配置中找到。"}
         else:
-            session_name = user_config.get('session_name')
-            current_task_result = await execute_telegram_action_wrapper(api_id, api_hash, user_nickname, session_name, target_config_item, task_config_entry)
+            session_name_from_config = user_config.get('session_name')
+            if not session_name_from_config:
+                current_task_result = {"success": False, "message": f"用户 {user_nickname} 缺少 session_name 配置。"}
+            else:
+                session_name = os.path.basename(session_name_from_config)
+            target_entity_identifier = task_config_entry.get('bot_username') or task_config_entry.get('target_chat_id')
+            eff_strat_id = task_config_entry.get('strategy_identifier') or \
+                           target_config_item.get('strategy') if target_config_item and 'strategy' in target_config_item else \
+                           target_config_item.get('strategy_identifier') if target_config_item and 'strategy_identifier' in target_config_item else "未知"
+
+            current_task_result = await execute_action(
+                session_name=session_name,
+                target_entity_identifier=target_entity_identifier,
+                strategy_id=eff_strat_id,
+                task_config=task_config_entry
+            )
 
         eff_strat_id = task_config_entry.get('strategy_identifier') or \
                        target_config_item.get('strategy') if target_config_item and 'strategy' in target_config_item else \

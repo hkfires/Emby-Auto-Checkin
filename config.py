@@ -4,11 +4,9 @@ DATA_DIR = "data"
 CONFIG_FILE = os.path.join(DATA_DIR, 'config_data.json')
 
 def _get_default_time_slot():
-    """Returns the default time slot configuration."""
     return {"id": 1, "name": "默认时段", "start_hour": 8, "start_minute": 0, "start_second": 0, "end_hour": 22, "end_minute": 0, "end_second": 0}
 
 def _get_default_config():
-    """Returns the default configuration structure."""
     cfg = {
         "api_id": None,
         "api_hash": None,
@@ -34,7 +32,6 @@ def _get_default_config():
     return cfg
 
 def load_config():
-    """Loads the configuration from the JSON file, handling migration from older formats."""
     if not os.path.exists(CONFIG_FILE):
         default_config = _get_default_config()
         save_config(default_config)
@@ -126,7 +123,6 @@ def load_config():
     return config
 
 def save_config(config_data):
-    """Saves the configuration data to the JSON file."""
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config_data, f, indent=2, ensure_ascii=False)

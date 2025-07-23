@@ -6,3 +6,5 @@ gunicorn==21.2.0
 SQLAlchemy==2.0.25
 httpx==0.26.0
 apscheduler==3.10.4
+fastapi
+uvicorn[standard]

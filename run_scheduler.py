@@ -2,8 +2,9 @@ import logging
 import random
 import time
 import asyncio
+import os
 from apscheduler.triggers.cron import CronTrigger
-from actions import execute_telegram_action_wrapper
+from utils.tg_service_api import execute_action
 from checkin_strategies import get_strategy_display_name
 from config import load_config
 from log import save_daily_checkin_log
@@ -51,11 +52,13 @@ async def run_checkin_task(user_telegram_id, target_type, target_identifier, tas
         return
 
     user_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}")
-    session_name = user_config.get('session_name')
+    session_name_from_config = user_config.get('session_name')
 
-    if not session_name:
+    if not session_name_from_config:
         logger.error(f"计划任务: 用户 {user_nickname} (TGID: {user_telegram_id}) 缺少 session_name。")
         return
+    
+    session_name = os.path.basename(session_name_from_config)
 
     if not api_id or not api_hash:
         result = {"success": False, "message": "API ID/Hash 未配置."}
@@ -78,7 +81,16 @@ async def run_checkin_task(user_telegram_id, target_type, target_identifier, tas
             result = {"success": False, "message": f"目标 '{target_identifier}' 未在配置中找到。"}
         else:
             logger.info(f"计划任务: 开始执行 User: {user_nickname}, Type: {target_type}, Target: {log_target_display_name}")
-            result = await execute_telegram_action_wrapper(api_id, api_hash, user_nickname, session_name, target_config_item, task_config)
+            eff_strat_id = task_config.get('strategy_identifier') or \
+                           (target_config_item.get('strategy') if target_config_item and 'strategy' in target_config_item else None) or \
+                           (target_config_item.get('strategy_identifier') if target_config_item and 'strategy_identifier' in target_config_item else "未知")
+
+            result = await execute_action(
+                session_name=session_name,
+                target_entity_identifier=target_identifier,
+                strategy_id=eff_strat_id,
+                task_config=task_config
+            )
 
     eff_strat_id = task_config.get('strategy_identifier') or \
                    (target_config_item.get('strategy') if target_config_item and 'strategy' in target_config_item else None) or \
