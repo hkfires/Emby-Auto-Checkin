@@ -8,7 +8,7 @@
     <hr>
 
     <h3>添加新群组</h3>
-    <form method="POST" action="{{ url_for('chats') }}" class="mb-4">
+    <form method="POST" action="{{ url_for('views.chats') }}" class="mb-4">
         <div class="form-group">
             <label for="chat_identifier">群组标识符 (用户名、邀请链接或ID):</label>
             <input type="text" class="form-control" id="chat_identifier" name="chat_identifier" required>
@@ -59,7 +59,7 @@
                         <td>{{ chat.chat_id }}</td>
                         <td>{{ strategy_display_names.get(chat.strategy_identifier, chat.strategy_identifier) }}</td>
                         <td>
-                            <a href="{{ url_for('delete_chat', chat_idx=loop.index0) }}" class="btn btn-danger btn-sm" onclick="return confirm('确定要删除这个群组吗？');">删除</a>
+                            <a href="{{ url_for('views.delete_chat', chat_idx=loop.index0) }}" class="btn btn-danger btn-sm" onclick="return confirm('确定要删除这个群组吗？');">删除</a>
                         </td>
                     </tr>
                 {% endfor %}

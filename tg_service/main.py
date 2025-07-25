@@ -20,7 +20,6 @@ migrate_session_names()
 
 app = FastAPI(
     title="Telegram Service",
-    description="一个用于管理Telegram客户端会话并执行操作的独立服务。",
     version="1.0.0"
 )
 

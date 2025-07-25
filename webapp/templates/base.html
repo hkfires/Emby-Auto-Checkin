@@ -17,35 +17,35 @@
 </head>
 <body>
     <nav class="navbar navbar-expand-md navbar-dark bg-dark fixed-top">
-        <a class="navbar-brand" href="{{ url_for('index') }}">Emby签到助手</a>
+        <a class="navbar-brand" href="{{ url_for('views.index') }}">Emby签到助手</a>
         <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarsExampleDefault" aria-controls="navbarsExampleDefault" aria-expanded="false" aria-label="Toggle navigation">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="navbarsExampleDefault">
             <ul class="navbar-nav mr-auto">
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">首页</a>
+                    <a class="nav-link {% if request.endpoint == 'views.index' %}active{% endif %}" href="{{ url_for('views.index') }}">首页</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'api_settings_page' %}active{% endif %}" href="{{ url_for('api_settings_page') }}">TG API 设置</a>
+                    <a class="nav-link {% if request.endpoint == 'views.api_settings_page' %}active{% endif %}" href="{{ url_for('views.api_settings_page') }}">TG API 设置</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'llm_settings_page' %}active{% endif %}" href="{{ url_for('llm_settings_page') }}">LLM API 设置</a>
+                    <a class="nav-link {% if request.endpoint == 'views.llm_settings_page' %}active{% endif %}" href="{{ url_for('views.llm_settings_page') }}">LLM API 设置</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'scheduler_settings_page' %}active{% endif %}" href="{{ url_for('scheduler_settings_page') }}">自动签到设置</a>
+                    <a class="nav-link {% if request.endpoint == 'views.scheduler_settings_page' %}active{% endif %}" href="{{ url_for('views.scheduler_settings_page') }}">自动签到设置</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'users_page' %}active{% endif %}" href="{{ url_for('users_page') }}">用户管理</a>
+                    <a class="nav-link {% if request.endpoint == 'views.users_page' %}active{% endif %}" href="{{ url_for('views.users_page') }}">用户管理</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'bots_page' %}active{% endif %}" href="{{ url_for('bots_page') }}">机器人管理</a>
+                    <a class="nav-link {% if request.endpoint == 'views.bots_page' %}active{% endif %}" href="{{ url_for('views.bots_page') }}">机器人管理</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'chats' %}active{% endif %}" href="{{ url_for('chats') }}">群组管理</a>
+                    <a class="nav-link {% if request.endpoint == 'views.chats' %}active{% endif %}" href="{{ url_for('views.chats') }}">群组管理</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'tasks_page' %}active{% endif %}" href="{{ url_for('tasks_page') }}">签到任务管理</a>
+                    <a class="nav-link {% if request.endpoint == 'views.tasks_page' %}active{% endif %}" href="{{ url_for('views.tasks_page') }}">签到任务管理</a>
                 </li>
             </ul>
             <ul class="navbar-nav ml-auto">
@@ -54,14 +54,14 @@
                     <span class="navbar-text" style="margin-right: 10px;">你好, {{ current_user.username }}</span>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'change_password' %}active{% endif %}" href="{{ url_for('change_password') }}">修改密码</a>
+                    <a class="nav-link {% if request.endpoint == 'auth.change_password' %}active{% endif %}" href="{{ url_for('auth.change_password') }}">修改密码</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="{{ url_for('logout') }}">登出</a>
+                    <a class="nav-link" href="{{ url_for('auth.logout') }}">登出</a>
                 </li>
                 {% else %}
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'login' %}active{% endif %}" href="{{ url_for('login') }}">登录</a>
+                    <a class="nav-link {% if request.endpoint == 'auth.login' %}active{% endif %}" href="{{ url_for('auth.login') }}">登录</a>
                 </li>
                 {% endif %}
             </ul>

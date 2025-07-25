@@ -4,7 +4,7 @@
 
 {% block content %}
 <h2>自动签到设置</h2>
-<form method="POST" action="{{ url_for('scheduler_settings_page') }}">
+<form method="POST" action="{{ url_for('views.scheduler_settings_page') }}">
     {% if root_mode %}
         <input type="hidden" name="root_mode" value="true">
     {% endif %}

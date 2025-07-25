@@ -5,7 +5,7 @@
 {% block content %}
 <h2>Telegram API 设置</h2>
 <p>请输入您的 Telegram API ID 和 API Hash。您可以从 <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a> 获取这些信息。</p>
-<form method="POST" action="{{ url_for('api_settings_page') }}">
+<form method="POST" action="{{ url_for('views.api_settings_page') }}">
     <div class="form-group">
         <label for="api_id">API ID</label>
         <input type="text" class="form-control" id="api_id" name="api_id" value="{{ api_id_display if api_id_display is not none else '' }}" placeholder="{{ '已设置，如需修改请输入新值' if original_api_id else '请输入API ID' }}" required>

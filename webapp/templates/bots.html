@@ -96,7 +96,7 @@ $(document).ready(function() {
         const bot_username = $('#bot_username_input').val();
         const strategy = $('#bot_strategy_select').val();
         $.ajax({
-            url: "{{ url_for('api_add_bot') }}",
+            url: "{{ url_for('api.add_bot') }}",
             type: 'POST',
             data: { bot_username: bot_username, strategy: strategy },
             dataType: 'json',
@@ -120,7 +120,7 @@ $(document).ready(function() {
         const bot_username = $(this).data('bot');
         if (confirm(`确定要删除机器人 @${bot_username} 吗？相关的签到任务也会被删除。`)) {
             $.ajax({
-                url: "{{ url_for('api_delete_bot') }}",
+                url: "{{ url_for('api.delete_bot') }}",
                 type: 'POST',
                 data: { bot_username: bot_username },
                 dataType: 'json',
@@ -162,7 +162,7 @@ $(document).ready(function() {
         $('#manual-checkin-result-area').html('<p class="text-info">正在尝试签到...</p>');
 
         $.ajax({
-            url: "{{ url_for('api_manual_action') }}",
+            url: "{{ url_for('api.manual_action') }}",
             type: 'POST',
             data: { 
                 user_telegram_id: userTelegramId, 

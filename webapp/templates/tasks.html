@@ -156,7 +156,7 @@
                 delete data.bot_username;
             }
             
-            fetch("{{ url_for('api_add_task') }}", {
+            fetch("{{ url_for('api.add_task') }}", {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: new URLSearchParams(data)
@@ -185,7 +185,7 @@
         const targetName = identifier; 
         if (!confirm(`确定要删除用户 ${userTelegramId} 对 ${targetType === 'bot' ? '机器人' : '群组'} ${targetName} 的任务吗？`)) return;
 
-        fetch("{{ url_for('api_delete_task') }}", {
+        fetch("{{ url_for('api.delete_task') }}", {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({ 
@@ -230,7 +230,7 @@
             if(taskStrategy) payload.task_strategy_manual = taskStrategy;
         }
 
-        fetch("{{ url_for('api_manual_action') }}", {
+        fetch("{{ url_for('api.manual_action') }}", {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams(payload)
@@ -254,7 +254,7 @@
         buttonElement.innerHTML = '处理中...';
         buttonElement.disabled = true;
 
-        fetch("{{ url_for('api_execute_all_tasks_http') }}", {
+        fetch("{{ url_for('api.execute_all_tasks_http') }}", {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         })

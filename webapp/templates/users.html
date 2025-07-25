@@ -93,7 +93,7 @@ $(document).ready(function() {
         addUserBtn.prop('disabled', true).text('处理中...');
 
         $.ajax({
-            url: "{{ url_for('api_add_user') }}",
+            url: "{{ url_for('api.add_user') }}",
             type: 'POST',
             data: { phone: phone },
             dataType: 'json',
@@ -134,7 +134,7 @@ $(document).ready(function() {
         };
 
         $.ajax({
-            url: "{{ url_for('api_submit_otp') }}",
+            url: "{{ url_for('api.submit_otp') }}",
             type: 'POST',
             data: postData,
             dataType: 'json',
@@ -165,7 +165,7 @@ $(document).ready(function() {
         const nickname = $(this).data('nickname');
         if (confirm(`确定要删除用户 ${nickname} 吗？相关的会话文件和签到任务也会被删除。`)) {
             $.ajax({
-                url: "{{ url_for('api_delete_user') }}",
+                url: "{{ url_for('api.delete_user') }}",
                 type: 'POST',
                 data: { nickname: nickname },
                 dataType: 'json',
