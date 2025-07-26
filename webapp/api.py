@@ -5,7 +5,7 @@ from config import load_config, save_config
 from log import save_daily_checkin_log
 from apscheduler.triggers.cron import CronTrigger
 from scheduler_instance import scheduler
-from run_scheduler import get_random_time_in_range
+from run_scheduler import get_random_time_in_range, reconcile_tasks
 from utils.tg_service_api import execute_action, manage_session
 from checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
 
@@ -427,6 +427,175 @@ def add_task():
             return jsonify({"success": True, "message": "任务已添加，但调度失败。请检查调度器服务状态。"})
     else:
         return jsonify({"success": False, "message": "该任务已存在。"}), 400
+
+@api.route('/tasks/add_batch', methods=['POST'])
+@login_required
+def add_tasks_batch():
+    config = load_config()
+    user_telegram_id_strs = request.form.getlist('user_telegram_ids[]')
+    target_identifiers = request.form.getlist('targets[]')
+    selected_time_slot_id_str = request.form.get('selected_time_slot_id')
+
+    if not user_telegram_id_strs or not target_identifiers:
+        return jsonify({"success": False, "message": "未选择用户或目标。"}), 400
+
+    try:
+        user_telegram_ids = [int(id_str) for id_str in user_telegram_id_strs]
+    except ValueError:
+        return jsonify({"success": False, "message": "无效的用户TG ID格式。"}), 400
+
+    if 'checkin_tasks' not in config or not isinstance(config['checkin_tasks'], list):
+        config['checkin_tasks'] = []
+
+    added_count = 0
+    existing_count = 0
+    
+    for user_id in user_telegram_ids:
+        for identifier in target_identifiers:
+            try:
+                target_type, target_id_str = identifier.split(':', 1)
+            except ValueError:
+                logger.warning(f"批量添加任务时跳过无效的目标标识符: {identifier}")
+                continue
+
+            new_task = {
+                "user_telegram_id": user_id,
+                "selected_time_slot_id": None
+            }
+
+            if selected_time_slot_id_str:
+                try:
+                    selected_time_slot_id = int(selected_time_slot_id_str)
+                    available_slot_ids = [s['id'] for s in config.get('scheduler_time_slots', [])]
+                    if selected_time_slot_id in available_slot_ids:
+                        new_task["selected_time_slot_id"] = selected_time_slot_id
+                    elif available_slot_ids:
+                        new_task["selected_time_slot_id"] = available_slot_ids[0]
+                except (ValueError, IndexError):
+                    pass
+            else:
+                available_slots = config.get('scheduler_time_slots', [])
+                if available_slots:
+                    new_task["selected_time_slot_id"] = available_slots[0]['id']
+
+            task_exists = False
+            if target_type == 'bot':
+                new_task["bot_username"] = target_id_str
+                task_exists = any(
+                    t.get('user_telegram_id') == user_id and t.get('bot_username') == target_id_str
+                    for t in config['checkin_tasks']
+                )
+            elif target_type == 'chat':
+                try:
+                    target_id = int(target_id_str)
+                    new_task["target_chat_id"] = target_id
+                    new_task["message_content"] = ""
+                    task_exists = any(
+                        t.get('user_telegram_id') == user_id and t.get('target_chat_id') == target_id
+                        for t in config['checkin_tasks']
+                    )
+                except ValueError:
+                    logger.warning(f"批量添加任务时跳过无效的群组ID: {target_id_str}")
+                    continue
+            else:
+                logger.warning(f"批量添加任务时跳过无效的目标类型: {target_type}")
+                continue
+
+            if not task_exists:
+                config['checkin_tasks'].append(new_task)
+                added_count += 1
+            else:
+                existing_count += 1
+
+    if added_count > 0:
+        save_config(config)
+        reconcile_tasks()
+        message = f"成功添加 {added_count} 个新任务。"
+        if existing_count > 0:
+            message += f" {existing_count} 个任务已存在，已跳过。"
+        return jsonify({"success": True, "message": message})
+    else:
+        return jsonify({"success": False, "message": "所有指定的任务都已存在或提供了无效的目标。"}), 400
+
+@api.route('/tasks/delete_batch', methods=['POST'])
+@login_required
+def delete_tasks_batch():
+    config = load_config()
+    tasks_to_delete = request.json.get('tasks', [])
+
+    if not tasks_to_delete:
+        return jsonify({"success": False, "message": "未选择要删除的任务。"}), 400
+
+    original_task_count = len(config.get('checkin_tasks', []))
+    
+    tasks_to_keep = []
+    deleted_count = 0
+
+    for task in config.get('checkin_tasks', []):
+        task_key = (
+            task.get('user_telegram_id'),
+            task.get('bot_username') or task.get('target_chat_id')
+        )
+        
+        should_delete = False
+        for task_to_delete in tasks_to_delete:
+            delete_key = (
+                task_to_delete.get('user_telegram_id'),
+                task_to_delete.get('identifier')
+            )
+            if task_key[0] == delete_key[0]:
+                if str(task_key[1]) == str(delete_key[1]):
+                    should_delete = True
+                    break
+        
+        if not should_delete:
+            tasks_to_keep.append(task)
+        else:
+            deleted_count += 1
+
+    if deleted_count > 0:
+        config['checkin_tasks'] = tasks_to_keep
+        save_config(config)
+        
+        reconcile_tasks()
+        
+        return jsonify({"success": True, "message": f"成功删除 {deleted_count} 个任务。"})
+    else:
+        return jsonify({"success": False, "message": "未找到要删除的任务。"}), 404
+
+@api.route('/tasks/update_slot', methods=['POST'])
+@login_required
+def update_task_slot():
+    config = load_config()
+    user_telegram_id_str = request.form.get('user_telegram_id')
+    identifier = request.form.get('identifier')
+    new_slot_id_str = request.form.get('selected_time_slot_id')
+
+    if not all([user_telegram_id_str, identifier, new_slot_id_str]):
+        return jsonify({"success": False, "message": "缺少必要参数。"}), 400
+
+    try:
+        user_telegram_id = int(user_telegram_id_str)
+        new_slot_id = int(new_slot_id_str)
+    except ValueError:
+        return jsonify({"success": False, "message": "无效的ID格式。"}), 400
+
+    task_found = False
+    for task in config.get('checkin_tasks', []):
+        task_key_user = task.get('user_telegram_id')
+        task_key_target = str(task.get('bot_username') or task.get('target_chat_id'))
+
+        if task_key_user == user_telegram_id and task_key_target == identifier:
+            task['selected_time_slot_id'] = new_slot_id
+            task_found = True
+            break
+    
+    if task_found:
+        save_config(config)
+        reconcile_tasks()
+        return jsonify({"success": True, "message": "任务的时间段已更新。"})
+    else:
+        return jsonify({"success": False, "message": "未找到指定的任务。"}), 404
 
 @api.route('/tasks/delete', methods=['POST'])
 def delete_task():
