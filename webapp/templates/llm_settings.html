@@ -19,7 +19,7 @@
     <form method="POST" action="{{ url_for('views.llm_settings_page') }}">
         <div class="mb-3">
             <label for="api_url" class="form-label">API URL</label>
-            <input type="url" class="form-control" id="api_url" name="api_url" value="{{ llm_settings.api_url or '' }}" placeholder="例如: https://proxyapi.meina.cn.eu.org" required>
+            <input type="url" class="form-control" id="api_url" name="api_url" value="{{ llm_settings.api_url or '' }}" placeholder="只支持OpenAI兼容模式API" required>
         </div>
         <div class="mb-3">
             <label for="api_key" class="form-label">API Key</label>
