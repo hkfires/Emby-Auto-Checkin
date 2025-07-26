@@ -103,22 +103,8 @@ def load_config():
              default_slot_id_for_tasks = first_slot_id
         
     for task in config.get("checkin_tasks", []):
-        task.setdefault("last_auto_checkin_status", None)
-        task.setdefault("last_auto_checkin_time", None)
-        task.setdefault("last_scheduled_date", None)
-        task.setdefault("scheduled_hour", None)
-        task.setdefault("scheduled_minute", None)
-        task.setdefault("scheduled_second", None)
-        
         if "selected_time_slot_id" not in task or migrated_to_slots_this_run:
             task["selected_time_slot_id"] = default_slot_id_for_tasks
-            
-    config.pop("scheduler_range_start_hour", None)
-    config.pop("scheduler_range_start_minute", None)
-    config.pop("scheduler_range_end_hour", None)
-    config.pop("scheduler_range_end_minute", None)
-    config.pop("scheduler_time_hour", None)
-    config.pop("scheduler_time_minute", None)
             
     return config
 

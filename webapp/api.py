@@ -399,7 +399,8 @@ def add_tasks_batch():
     user_telegram_id_strs = request.form.getlist('user_telegram_ids[]')
     target_identifiers = request.form.getlist('targets[]')
     selected_time_slot_id_str = request.form.get('selected_time_slot_id')
-
+    message_content = request.form.get('message_content', '')
+ 
     if not user_telegram_id_strs or not target_identifiers:
         return jsonify({"success": False, "message": "未选择用户或目标。"}), 400
 
@@ -453,7 +454,7 @@ def add_tasks_batch():
                 try:
                     target_id = int(target_id_str)
                     new_task["target_chat_id"] = target_id
-                    new_task["message_content"] = ""
+                    new_task["message_content"] = message_content
                     task_exists = any(
                         t.get('user_telegram_id') == user_id and t.get('target_chat_id') == target_id
                         for t in config['checkin_tasks']
@@ -559,6 +560,37 @@ def update_task_slot():
     else:
         return jsonify({"success": False, "message": "未找到指定的任务。"}), 404
 
+@api.route('/tasks/update_message', methods=['POST'])
+@login_required
+def update_task_message():
+   config = load_config()
+   user_telegram_id_str = request.form.get('user_telegram_id')
+   identifier = request.form.get('identifier')
+   message_content = request.form.get('message_content', '')
+
+   if not all([user_telegram_id_str, identifier]):
+       return jsonify({"success": False, "message": "缺少必要参数。"}), 400
+
+   try:
+       user_telegram_id = int(user_telegram_id_str)
+       target_chat_id = int(identifier)
+   except ValueError:
+       return jsonify({"success": False, "message": "无效的ID格式。"}), 400
+
+   task_found = False
+   for task in config.get('checkin_tasks', []):
+       if task.get('user_telegram_id') == user_telegram_id and task.get('target_chat_id') == target_chat_id:
+           task['message_content'] = message_content
+           task_found = True
+           break
+   
+   if task_found:
+       save_config(config)
+       notify_scheduler_to_reconcile()
+       return jsonify({"success": True, "message": "任务的消息内容已更新。"})
+   else:
+       return jsonify({"success": False, "message": "未找到指定的任务。"}), 404
+
 @api.route('/tasks/delete', methods=['POST'])
 def delete_task():
     config = load_config()
@@ -644,23 +676,29 @@ async def manual_action():
     
     target_config_item = None
     log_target_display_name = identifier
-    task_for_manual_action = {"user_telegram_id": user_telegram_id}
+    
+    task_for_manual_action = next((t for t in config.get('checkin_tasks', [])
+                                   if t.get('user_telegram_id') == user_telegram_id and
+                                      (str(t.get('bot_username')) == identifier or str(t.get('target_chat_id')) == identifier)),
+                                  None)
+
+    if not task_for_manual_action:
+        return jsonify({"success": False, "message": "在配置中未找到匹配的原始任务。"}), 404
 
     if target_type == 'bot':
         target_config_item = next((b for b in config.get('bots', []) if isinstance(b, dict) and b.get('bot_username') == identifier), None)
-        if target_config_item:
-            task_for_manual_action['bot_username'] = identifier
-            if task_strategy_manual: task_for_manual_action['strategy_identifier'] = task_strategy_manual
+        if target_config_item and task_strategy_manual:
+            task_for_manual_action['strategy_identifier'] = task_strategy_manual
     elif target_type == 'chat':
         try:
             chat_id_int = int(identifier)
             target_config_item = next((c for c in config.get('chats', []) if isinstance(c, dict) and c.get('chat_id') == chat_id_int), None)
             if target_config_item:
-                task_for_manual_action['target_chat_id'] = chat_id_int
                 log_target_display_name = target_config_item.get('chat_title', identifier)
                 if message_content_manual is not None:
                     task_for_manual_action['message_content'] = message_content_manual
-                if task_strategy_manual: task_for_manual_action['strategy_identifier'] = task_strategy_manual
+                if task_strategy_manual:
+                    task_for_manual_action['strategy_identifier'] = task_strategy_manual
         except ValueError:
              return jsonify({"success": False, "message": "群组ID必须是数字。"}), 400
     

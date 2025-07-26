@@ -80,12 +80,15 @@
                 </div>
             </div>
         </div>
+        <div id="message_content_group" class="form-group mt-3" style="display: none;">
+            <label for="message_content">消息内容 (仅对群组目标有效):</label>
+            <textarea class="form-control" id="message_content" name="message_content" rows="3"></textarea>
+        </div>
         <button type="submit" class="btn btn-primary mt-3">批量添加任务</button>
     </form>
 
     <h4>已配置任务</h4>
     
-    <!-- 筛选区域 -->
     <div class="row mb-3 align-items-end">
         <div class="col-md-4">
             <select id="filter-tg-user" class="form-control">
@@ -156,6 +159,14 @@
                                 data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}">
                                 手动执行
                             </button>
+                            {% if task.target_type == 'chat' %}
+                            <button class="btn btn-secondary btn-sm" onclick="openEditModal(this)"
+                                data-user-id="{{ task.user_telegram_id }}"
+                                data-identifier="{{ task.target_chat_id }}"
+                                data-message="{{ task.message_content_display | default('', true) }}">
+                                编辑消息
+                            </button>
+                            {% endif %}
                             <button class="btn btn-danger btn-sm" onclick="deleteSingleTask(this)"
                                 data-user-id="{{ task.user_telegram_id }}"
                                 data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}">
@@ -169,6 +180,33 @@
     {% else %}
         <p>尚未配置任何任务。</p>
     {% endif %}
+</div>
+
+<div class="modal fade" id="editMessageModal" tabindex="-1" role="dialog" aria-labelledby="editMessageModalLabel" aria-hidden="true">
+   <div class="modal-dialog" role="document">
+       <div class="modal-content">
+           <div class="modal-header">
+               <h5 class="modal-title" id="editMessageModalLabel">编辑消息内容</h5>
+               <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                   <span aria-hidden="true">&times;</span>
+               </button>
+           </div>
+           <div class="modal-body">
+               <form id="editMessageForm">
+                   <input type="hidden" id="edit-user-id" name="user_telegram_id">
+                   <input type="hidden" id="edit-identifier" name="identifier">
+                   <div class="form-group">
+                       <label for="edit-message-content">消息内容</label>
+                       <textarea class="form-control" id="edit-message-content" name="message_content" rows="5"></textarea>
+                   </div>
+               </form>
+           </div>
+           <div class="modal-footer">
+               <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+               <button type="button" class="btn btn-primary" onclick="saveMessageChanges()">保存更改</button>
+           </div>
+       </div>
+   </div>
 </div>
 {% endblock %}
 
@@ -196,13 +234,27 @@ $(document).ready(function() {
         }
     });
 
-    $('#addTaskForm').on('submit', function(e) {
-        e.preventDefault();
+    $('#targets').on('change', function() {
+        const selectedOptions = $(this).val();
+        let hasChat = false;
+        if (selectedOptions) {
+            selectedOptions.forEach(function(option) {
+                if (option.startsWith('chat:')) {
+                    hasChat = true;
+                }
+            });
+        }
+        $('#message_content_group').toggle(hasChat);
+    });
+ 
+     $('#addTaskForm').on('submit', function(e) {
+         e.preventDefault();
         const params = new URLSearchParams();
         
         $('#user_telegram_ids').val().forEach(id => params.append('user_telegram_ids[]', id));
         $('#targets').val().forEach(target => params.append('targets[]', target));
         params.append('selected_time_slot_id', $('#selected_time_slot_id').val());
+        params.append('message_content', $('#message_content').val());
 
         fetch("{{ url_for('api.add_tasks_batch') }}", {
             method: 'POST',
@@ -362,6 +414,37 @@ function manualActionFromData(buttonElement) {
         buttonElement.innerHTML = originalButtonText;
         buttonElement.disabled = false;
     });
+}
+
+function openEditModal(buttonElement) {
+   const { userId, identifier, message } = buttonElement.dataset;
+   $('#edit-user-id').val(userId);
+   $('#edit-identifier').val(identifier);
+   $('#edit-message-content').val(message);
+   $('#editMessageModal').modal('show');
+}
+
+function saveMessageChanges() {
+   const form = document.getElementById('editMessageForm');
+   const formData = new FormData(form);
+   const data = Object.fromEntries(formData.entries());
+
+   fetch("{{ url_for('api.update_task_message') }}", {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+       body: new URLSearchParams(data)
+   })
+   .then(response => response.json())
+   .then(data => {
+       if (data.success) {
+           showAlert(data.message, 'success');
+           $('#editMessageModal').modal('hide');
+           setTimeout(() => window.location.reload(), 1000);
+       } else {
+           showAlert(data.message, 'danger');
+       }
+   })
+   .catch(error => showAlert('更新消息时发生网络错误: ' + error, 'danger'));
 }
 </script>
 {% endblock %}
