@@ -3,10 +3,8 @@ from flask import Blueprint, request, jsonify, current_app, flash
 from flask_login import login_required
 from config import load_config, save_config
 from log import save_daily_checkin_log
-from apscheduler.triggers.cron import CronTrigger
-from scheduler_instance import scheduler
-from run_scheduler import get_random_time_in_range, reconcile_tasks
 from utils.tg_service_api import execute_action, manage_session
+from utils.scheduler_api import notify_scheduler_to_reconcile
 from checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
 
 api = Blueprint('api', __name__)
@@ -233,11 +231,7 @@ async def delete_user():
 
     if len(config.get('users', [])) < original_user_count:
         save_config(config)
-        if user_telegram_id_to_delete:
-            for job in scheduler.get_jobs():
-                if job.id and job.id.startswith(f"checkin_job_{user_telegram_id_to_delete}_"):
-                    scheduler.remove_job(job.id)
-                    logger.info(f"已从调度器中移除任务: {job.id}")
+        notify_scheduler_to_reconcile()
         logger.info(f"用户 {nickname_to_delete} 已删除。")
         return jsonify({"success": True, "message": f"用户 {nickname_to_delete} 已删除。"})
     else:
@@ -289,10 +283,7 @@ def delete_bot():
         if 'checkin_tasks' in config:
             config['checkin_tasks'] = [t for t in config['checkin_tasks'] if t.get('bot_username') != bot_to_delete_username]
         save_config(config)
-        for job in scheduler.get_jobs():
-            if job.id and job.id.endswith(f"_bot_{bot_to_delete_username}"):
-                scheduler.remove_job(job.id)
-                logger.info(f"已从调度器中移除任务: {job.id}")
+        notify_scheduler_to_reconcile()
         logger.info(f"机器人 {bot_to_delete_username} 已删除。")
         return jsonify({"success": True, "message": "机器人已删除。"})
     else:
@@ -390,41 +381,9 @@ def add_task():
     if not task_exists:
         config['checkin_tasks'].append(new_task)
         save_config(config)
-        try:
-            scheduler_time_slots = config.get('scheduler_time_slots', [])
-            selected_slot_id = new_task.get('selected_time_slot_id')
-            task_specific_time_slot = next((s for s in scheduler_time_slots if s.get('id') == selected_slot_id), scheduler_time_slots if scheduler_time_slots else None)
-
-            if task_specific_time_slot:
-                slot_start_h = task_specific_time_slot.get('start_hour', 8)
-                slot_start_m = task_specific_time_slot.get('start_minute', 0)
-                slot_start_s = task_specific_time_slot.get('start_second', 0)
-                slot_end_h = task_specific_time_slot.get('end_hour', 22)
-                slot_end_m = task_specific_time_slot.get('end_minute', 0)
-                slot_end_s = task_specific_time_slot.get('end_second', 0)
-                rand_h, rand_m, rand_s = get_random_time_in_range(slot_start_h, slot_start_m, slot_end_h, slot_end_m, slot_start_s, slot_end_s)
-
-                target_identifier = new_task.get('bot_username') or new_task.get('target_chat_id')
-                job_id_suffix = f"bot_{target_identifier}" if target_type == 'bot' else f"chat_{target_identifier}"
-                job_id = f"checkin_job_{user_telegram_id}_{job_id_suffix}"
-
-                scheduler.add_job(
-                    'run_scheduler:run_checkin_task_sync',
-                    trigger=CronTrigger(hour=rand_h, minute=rand_m, second=rand_s),
-                    args=[user_telegram_id, target_type, target_identifier, new_task],
-                    id=job_id,
-                    name=f"Task: {user_nickname} -> {log_target_name}",
-                    replace_existing=True
-                )
-                logger.info(f"任务已添加并调度: 用户 {user_nickname} -> {log_target_name} at {rand_h:02d}:{rand_m:02d}:{rand_s:02d}")
-                return jsonify({"success": True, "message": "任务已添加并成功调度。"})
-            else:
-                logger.error(f"无法为新任务 {log_target_name} 找到调度时间段。")
-                return jsonify({"success": True, "message": "任务已添加，但无法调度（未配置时间段）。它将在下次调度器重载时尝试调度。"})
-
-        except Exception as e:
-            logger.error(f"添加任务到调度器时出错: {e}", exc_info=True)
-            return jsonify({"success": True, "message": "任务已添加，但调度失败。请检查调度器服务状态。"})
+        notify_scheduler_to_reconcile()
+        logger.info(f"任务已添加: 用户 {user_nickname} -> {log_target_name}")
+        return jsonify({"success": True, "message": "任务已添加，调度器将很快进行同步。"})
     else:
         return jsonify({"success": False, "message": "该任务已存在。"}), 400
 
@@ -509,7 +468,7 @@ def add_tasks_batch():
 
     if added_count > 0:
         save_config(config)
-        reconcile_tasks()
+        notify_scheduler_to_reconcile()
         message = f"成功添加 {added_count} 个新任务。"
         if existing_count > 0:
             message += f" {existing_count} 个任务已存在，已跳过。"
@@ -556,9 +515,7 @@ def delete_tasks_batch():
     if deleted_count > 0:
         config['checkin_tasks'] = tasks_to_keep
         save_config(config)
-        
-        reconcile_tasks()
-        
+        notify_scheduler_to_reconcile()
         return jsonify({"success": True, "message": f"成功删除 {deleted_count} 个任务。"})
     else:
         return jsonify({"success": False, "message": "未找到要删除的任务。"}), 404
@@ -592,7 +549,7 @@ def update_task_slot():
     
     if task_found:
         save_config(config)
-        reconcile_tasks()
+        notify_scheduler_to_reconcile()
         return jsonify({"success": True, "message": "任务的时间段已更新。"})
     else:
         return jsonify({"success": False, "message": "未找到指定的任务。"}), 404
@@ -641,17 +598,7 @@ def delete_task():
 
     if len(config['checkin_tasks']) < original_task_count:
         save_config(config)
-        try:
-            job_id_suffix = f"bot_{identifier}" if target_type == 'bot' else f"chat_{identifier}"
-            job_id = f"checkin_job_{user_telegram_id}_{job_id_suffix}"
-            if scheduler.get_job(job_id):
-                scheduler.remove_job(job_id)
-                logger.info(f"已从调度器中移除任务: {job_id}")
-            else:
-                logger.warning(f"尝试删除任务 {job_id}，但在调度器中未找到。")
-        except Exception as e:
-            logger.error(f"从调度器删除任务 {job_id} 时出错: {e}", exc_info=True)
-
+        notify_scheduler_to_reconcile()
         logger.info(f"任务已删除: 用户 {log_identifier_user} -> {target_type.upper()} {log_target_name}")
         return jsonify({"success": True, "message": "任务已删除。"})
     else:

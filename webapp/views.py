@@ -6,7 +6,7 @@ from log import load_checkin_log_by_date
 from utils.common import get_masked_api_credentials, get_processed_bots_list, update_api_credential
 from utils.tg_service_api import resolve_chat_identifier
 from checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
-from scheduler_instance import scheduler
+from utils.scheduler_api import notify_scheduler_to_reconcile
 import logging
 
 logger = logging.getLogger(__name__)
@@ -153,8 +153,11 @@ def scheduler_settings_page():
         config['scheduler_time_slots'] = new_scheduler_time_slots
         
         save_config(config)
-
-        flash("自动签到设置已成功保存。更改将在每日重调度（凌晨1点）或重启调度器服务后生效。", "warning")
+        success, message = notify_scheduler_to_reconcile()
+        if success:
+            flash("自动签到设置已成功保存，并已通知调度器更新任务。", "success")
+        else:
+            flash(f"自动签到设置已保存，但通知调度器失败: {message}。更改将在下次自动同步时生效。", "warning")
         config = load_config()
 
     return render_template('scheduler_settings.html',
@@ -272,12 +275,7 @@ def delete_chat(chat_idx):
             ]
         
         save_config(config)
-        deleted_chat_id = deleted_chat.get('chat_id')
-        if deleted_chat_id:
-            for job in scheduler.get_jobs():
-                if job.id and job.id.endswith(f"_chat_{deleted_chat_id}"):
-                    scheduler.remove_job(job.id)
-                    logger.info(f"已从调度器中移除任务: {job.id}")
+        notify_scheduler_to_reconcile()
         flash(f"群组 '{deleted_chat.get('chat_title')}' 已删除。", 'success')
         logger.info(f"群组 '{deleted_chat.get('chat_title')}' (ID: {deleted_chat.get('chat_id')}) 已删除。")
     else:
