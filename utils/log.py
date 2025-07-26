@@ -7,7 +7,12 @@ logger = logging.getLogger(__name__)
 DATA_DIR = "data"
 DB_FILE = os.path.join(DATA_DIR, 'checkin_log.db')
 
+_db_initialized = False
+ 
 def init_log_db():
+    global _db_initialized
+    if _db_initialized:
+        return
     os.makedirs(DATA_DIR, exist_ok=True)
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -26,6 +31,7 @@ def init_log_db():
             ''')
             conn.commit()
             logger.info(f"数据库 {DB_FILE} 初始化成功。")
+            _db_initialized = True
     except sqlite3.Error as e:
         logger.error(f"初始化数据库 {DB_FILE} 时出错: {e}")
 
