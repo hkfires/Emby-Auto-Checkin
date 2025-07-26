@@ -2,8 +2,8 @@ import os
 import logging
 from flask import Flask
 from flask_login import LoginManager
-from config import load_config, save_config, migrate_session_names
-from log import init_log_db
+from utils.config import load_config, save_config, migrate_session_names
+from utils.log import init_log_db
 from utils.common import format_datetime_filter
 
 migrate_session_names()

@@ -1,5 +1,5 @@
 from flask_login import UserMixin
-from config import load_config
+from utils.config import load_config
 
 class User(UserMixin):
     def __init__(self, id, username, password_hash=None):

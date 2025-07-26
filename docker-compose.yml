@@ -9,14 +9,14 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     depends_on:
-      - tg_service
+      - tgservice
       - scheduler
     environment:
-      - TG_SERVICE_HOST=tg_service
+      - TG_SERVICE_HOST=tgservice
       - TG_SERVICE_PORT=5056
       - SCHEDULER_HOST=scheduler
       - SCHEDULER_PORT=5057
-    command: gunicorn -w 1 -b 0.0.0.0:5055 'webapp:create_app()'
+    command: gunicorn -w 1 -b 0.0.0.0:5055 'run_webapp:create_app()'
 
   scheduler:
     build: .
@@ -28,13 +28,13 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     depends_on:
-      - tg_service
+      - tgservice
     environment:
-      - TG_SERVICE_HOST=tg_service
+      - TG_SERVICE_HOST=tgservice
       - TG_SERVICE_PORT=5056
     command: gunicorn -w 1 -b 0.0.0.0:5057 'run_scheduler:app'
 
-  tg_service:
+  tgservice:
     build: .
     image: emby-auto-checkin:latest
     container_name: emby-auto-checkin-tg-service
@@ -43,4 +43,4 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
-    command: uvicorn tg_service.main:app --host 0.0.0.0 --port 5056
+    command: uvicorn tgservice.main:app --host 0.0.0.0 --port 5056

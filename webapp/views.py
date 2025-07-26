@@ -1,11 +1,11 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask_login import login_required, current_user
 from datetime import date, datetime
-from config import load_config, save_config
-from log import load_checkin_log_by_date
+from utils.config import load_config, save_config
+from utils.log import load_checkin_log_by_date
 from utils.common import get_masked_api_credentials, get_processed_bots_list, update_api_credential
-from utils.tg_service_api import resolve_chat_identifier
-from checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
+from utils.tgservice_api import resolve_chat_identifier
+from tgservice.checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
 from utils.scheduler_api import notify_scheduler_to_reconcile
 import logging
 

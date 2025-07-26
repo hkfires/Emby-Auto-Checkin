@@ -8,7 +8,7 @@ DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
 
 import sys
 sys.path.append(PROJECT_ROOT)
-from config import load_config
+from utils.config import load_config
 
 logger = logging.getLogger(__name__)
 

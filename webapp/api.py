@@ -1,11 +1,11 @@
 import logging, os, asyncio, httpx, base64, json, threading
 from flask import Blueprint, request, jsonify, current_app, flash
 from flask_login import login_required
-from config import load_config, save_config
-from log import save_daily_checkin_log
-from utils.tg_service_api import execute_action, manage_session
+from utils.config import load_config, save_config
+from utils.log import save_daily_checkin_log
+from utils.tgservice_api import execute_action, manage_session
 from utils.scheduler_api import notify_scheduler_to_reconcile
-from checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
+from tgservice.checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
 
 api = Blueprint('api', __name__)
 logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ async def add_user():
     if any(u.get('phone') == phone for u in config.get('users', [])):
         return jsonify({"success": False, "message": "该手机号码已经添加过。"}), 400
 
-    from utils.tg_service_api import send_code
+    from utils.tgservice_api import send_code
     result = await send_code(phone)
 
     if result.get("success"):
@@ -170,7 +170,7 @@ async def submit_otp():
     
     phone_code_hash = otp_data['hash']
 
-    from utils.tg_service_api import sign_in
+    from utils.tgservice_api import sign_in
     result = await sign_in(phone, otp_code, phone_code_hash, password)
 
     if result.get("success"):

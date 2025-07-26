@@ -1,6 +1,6 @@
 import asyncio, re, base64, httpx, io, json
 from telethon import events, errors
-from config import load_config
+from utils.config import load_config
 
 class CheckinStrategy:
     def __init__(self, client, target_entity, logger, nickname_for_logging, task_config=None):

@@ -70,7 +70,7 @@ bash <(curl -fsSL https://get.docker.com)
 
 1.  **WebApp (`webapp`)**: 提供用户操作的 Web 界面，运行在 5055 端口。
 2.  **Scheduler (`scheduler`)**: 负责执行所有定时签到任务。
-3.  **Telegram Service (`tg_service`)**: 核心服务，负责维护与 Telegram 的长连接，并提供 API 供其他服务调用。
+3.  **Telegram Service (`tgservice`)**: 核心服务，负责维护与 Telegram 的长连接，并提供 API 供其他服务调用。
 
 ### 数据持久化
 

@@ -6,11 +6,32 @@ import asyncio
 import os
 import httpx
 from apscheduler.triggers.cron import CronTrigger
-from utils.tg_service_api import execute_action
-from checkin_strategies import get_strategy_display_name
-from config import load_config
-from log import save_daily_checkin_log
-from scheduler_instance import scheduler
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from utils.tgservice_api import execute_action
+from tgservice.checkin_strategies import get_strategy_display_name
+from utils.config import load_config
+from utils.log import save_daily_checkin_log
+
+jobstores = {
+    'default': SQLAlchemyJobStore(url='sqlite:///data/jobs.sqlite')
+}
+
+executors = {
+    'default': {'type': 'threadpool', 'max_workers': 20}
+}
+
+job_defaults = {
+    'coalesce': False,
+    'max_instances': 3
+}
+
+scheduler = BackgroundScheduler(
+    jobstores=jobstores,
+    executors=executors,
+    job_defaults=job_defaults,
+    timezone='Asia/Shanghai'
+)
 
 logger = logging.getLogger(__name__)
 
