@@ -153,11 +153,8 @@ def scheduler_settings_page():
         config['scheduler_time_slots'] = new_scheduler_time_slots
         
         save_config(config)
-        success, message = notify_scheduler_to_reconcile()
-        if success:
-            flash("自动签到设置已成功保存，并已通知调度器更新任务。", "success")
-        else:
-            flash(f"自动签到设置已保存，但通知调度器失败: {message}。更改将在下次自动同步时生效。", "warning")
+        notify_scheduler_to_reconcile()
+        flash("自动签到设置已保存。已在后台通知调度器更新任务，请稍后刷新查看状态。", "success")
         config = load_config()
 
     return render_template('scheduler_settings.html',

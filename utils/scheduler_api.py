@@ -1,6 +1,7 @@
 import logging
 import random
 import time
+import threading
 import asyncio
 import os
 import httpx
@@ -259,22 +260,21 @@ SCHEDULER_HOST = os.environ.get("SCHEDULER_HOST", "localhost")
 SCHEDULER_PORT = os.environ.get("SCHEDULER_PORT", "5057")
 SCHEDULER_URL = f"http://{SCHEDULER_HOST}:{SCHEDULER_PORT}"
 
-def notify_scheduler_to_reconcile():
-    """
-    向调度器服务发送一个请求，通知它重新核对任务。
-    """
+def _send_reconcile_request():
     reconcile_url = f"{SCHEDULER_URL}/reconcile"
     try:
         with httpx.Client() as client:
             response = client.post(reconcile_url, timeout=10)
-        
         if response.status_code == 200:
-            logger.info("成功通知调度器进行任务核对。")
-            return True, "成功通知调度器。"
+            logger.info("后台任务：成功通知调度器进行任务核对。")
         else:
-            logger.error(f"通知调度器失败，状态码: {response.status_code}, 响应: {response.text}")
-            return False, f"通知调度器失败: {response.status_code}"
-            
+            logger.error(f"后台任务：通知调度器失败，状态码: {response.status_code}, 响应: {response.text}")
+    except httpx.ConnectError:
+        logger.info(f"后台任务：无法连接到调度器服务(URL: {reconcile_url})，可能服务未运行。配置已保存，将在调度器下次启动时自动同步。")
     except httpx.RequestError as e:
-        logger.error(f"请求调度器服务时发生网络错误: {e}")
-        return False, f"请求调度器时出错: {e}"
+        logger.error(f"后台任务：请求调度器服务时发生未知网络错误: {e}")
+
+def notify_scheduler_to_reconcile():
+    logger.info("正在创建后台线程以通知调度器...")
+    thread = threading.Thread(target=_send_reconcile_request, daemon=True)
+    thread.start()

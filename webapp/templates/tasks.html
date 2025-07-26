@@ -139,7 +139,7 @@
                         <td>{{ '机器人' if task.target_type == 'bot' else '群组' }}</td>
                         <td>{{ task.target_name }}</td>
                         <td>
-                            <select class="form-control slot-select" onchange="updateTaskSlot(this)"
+                            <select class="form-control form-control-sm slot-select" onchange="updateTaskSlot(this)"
                                 data-user-id="{{ task.user_telegram_id }}"
                                 data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}">
                                 {% for slot in scheduler_time_slots %}

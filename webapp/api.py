@@ -240,8 +240,13 @@ async def delete_user():
 @api.route('/bots/add', methods=['POST'])
 def add_bot():
     config = load_config()
-    bot_username = request.form.get('bot_username')
+    bot_username_raw = request.form.get('bot_username', '').strip()
     strategy = request.form.get('strategy', 'start_button_alert')
+
+    if not bot_username_raw:
+        return jsonify({"success": False, "message": "未提供机器人用户名。"}), 400
+
+    bot_username = bot_username_raw.lstrip('@')
 
     if not bot_username:
         return jsonify({"success": False, "message": "未提供机器人用户名。"}), 400
