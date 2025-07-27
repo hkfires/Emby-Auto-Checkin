@@ -1,7 +1,6 @@
-import asyncio
 import logging
 import os
-from telethon import TelegramClient, errors
+from telethon import TelegramClient
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
@@ -25,15 +24,11 @@ class ClientManager:
         api_id = self.config.get('api_id')
         api_hash = self.config.get('api_hash')
         
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(DATA_DIR)
-            temp_session_name = f"temp_login_{phone_number}_{os.urandom(4).hex()}"
-            client = TelegramClient(temp_session_name, api_id, api_hash)
-            self._temp_login_clients[phone_number] = client
-            return client
-        finally:
-            os.chdir(original_cwd)
+        temp_session_name = f"temp_login_{phone_number}_{os.urandom(4).hex()}"
+        session_path = os.path.join(DATA_DIR, temp_session_name)
+        client = TelegramClient(session_path, api_id, api_hash)
+        self._temp_login_clients[phone_number] = client
+        return client
 
     def get_temp_login_client(self, phone_number: str):
         return self._temp_login_clients.get(phone_number)
@@ -44,13 +39,18 @@ class ClientManager:
             if client.is_connected():
                 await client.disconnect()
             
-            session_file = f"{client.session.filename}"
-            if os.path.exists(session_file):
+            session_file = client.session.filename
+            if not session_file.endswith('.session'):
+                session_file_path = f"{session_file}.session"
+            else:
+                session_file_path = session_file
+
+            if os.path.exists(session_file_path):
                 try:
-                    os.remove(session_file)
-                    logger.info(f"已删除临时会话文件: {session_file}")
+                    os.remove(session_file_path)
+                    logger.info(f"已删除临时会话文件: {session_file_path}")
                 except OSError as e:
-                    logger.error(f"删除临时会话文件 {session_file} 时出错: {e}")
+                    logger.error(f"删除临时会话文件 {session_file_path} 时出错: {e}")
 
     async def initialize_clients(self):
         logger.info("正在初始化所有Telegram客户端...")
@@ -73,12 +73,8 @@ class ClientManager:
             return
 
         logger.info(f"用户 {nickname}: 正在为会话 {session_name} 创建新的客户端实例。")
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(DATA_DIR)
-            client = TelegramClient(session_name, api_id, api_hash)
-        finally:
-            os.chdir(original_cwd)
+        session_path = os.path.join(DATA_DIR, session_name)
+        client = TelegramClient(session_path, api_id, api_hash)
 
         try:
             await client.connect()
