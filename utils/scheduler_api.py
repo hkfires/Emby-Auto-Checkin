@@ -56,7 +56,7 @@ def get_random_time_in_range(start_h, start_m, end_h, end_m, start_s=0, end_s=0)
         else:
             random_total_seconds = random_point - first_part_duration
     else:
-        random_total_seconds = random.randint(start_total_seconds, end_total_seconds - 1)
+        random_total_seconds = random.randint(start_total_seconds, end_total_seconds)
 
     rand_h = random_total_seconds // 3600
     rand_m = (random_total_seconds % 3600) // 60

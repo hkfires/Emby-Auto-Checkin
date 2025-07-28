@@ -85,6 +85,7 @@ def scheduler_settings_page():
 
     if request.method == 'POST':
         form_data = request.form.to_dict()
+        old_time_slots = config.get('scheduler_time_slots', [])
         
         new_scheduler_time_slots = []
         for i in range(1, 4):
@@ -105,34 +106,35 @@ def scheduler_settings_page():
             try:
                 start_hour = int(form_data.get(f'slot_{i}_start_hour'))
                 start_minute = int(form_data.get(f'slot_{i}_start_minute'))
-                start_second = int(form_data.get(f'slot_{i}_start_second', 0)) if root_mode else 0
                 end_hour = int(form_data.get(f'slot_{i}_end_hour'))
                 end_minute = int(form_data.get(f'slot_{i}_end_minute'))
-                end_second = int(form_data.get(f'slot_{i}_end_second', 0)) if root_mode else 0
+
+                old_slot = old_time_slots[i-1] if i - 1 < len(old_time_slots) else {}
+                if root_mode:
+                    start_second = int(form_data.get(f'slot_{i}_start_second', 0))
+                    end_second = int(form_data.get(f'slot_{i}_end_second', 0))
+                else:
+                    start_second = old_slot.get('start_second', 0)
+                    end_second = old_slot.get('end_second', 0)
 
                 if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and 0 <= start_second <= 59 and \
-                        0 <= end_hour <= 24 and 0 <= end_minute <= 59 and 0 <= end_second <= 59):
+                        0 <= end_hour <= 23 and 0 <= end_minute <= 59 and 0 <= end_second <= 59):
                     flash(f"时间段 {i} ('{slot_name}') 的时间值超出有效范围 (小时 0-23, 分钟/秒 0-59)。", "danger")
                     return render_template('scheduler_settings.html',
                                            scheduler_enabled=config.get('scheduler_enabled'),
                                            scheduler_time_slots=config.get('scheduler_time_slots', []),
                                            root_mode=root_mode)
 
-                start_total_seconds = start_hour * 3600 + start_minute * 60 + start_second
-                end_total_seconds = end_hour * 3600 + end_minute * 60 + end_second
-
-                
                 slot_data = {
                     "id": len(new_scheduler_time_slots) + 1,
                     "name": slot_name.strip(),
                     "start_hour": start_hour,
                     "start_minute": start_minute,
+                    "start_second": start_second,
                     "end_hour": end_hour,
-                    "end_minute": end_minute
+                    "end_minute": end_minute,
+                    "end_second": end_second
                 }
-                if root_mode:
-                    slot_data["start_second"] = start_second
-                    slot_data["end_second"] = end_second
                 new_scheduler_time_slots.append(slot_data)
 
             except (ValueError, TypeError):
