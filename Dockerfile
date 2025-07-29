@@ -1,24 +1,15 @@
-# 使用官方 Python 运行时作为父镜像
-FROM python:3.12-alpine
-
-# 设置工作目录
+FROM python:3.12-alpine AS builder
+RUN apk add --no-cache build-base
 WORKDIR /app
-
-# 将依赖文件复制到工作目录
 COPY requirements.txt .
-
-# 设置时区
-ENV TZ=Asia/Shanghai
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
-# 安装依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 将项目中的所有文件复制到工作目录
+FROM python:3.12-alpine
+WORKDIR /app
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
-
-# 暴露应用程序运行的端口
 EXPOSE 5055
-
-# 定义容器启动时运行的命令
-CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5055", "webapp:create_app()"]
+CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5055", "run_webapp:create_app()"]
