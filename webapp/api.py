@@ -641,6 +641,41 @@ def delete_task():
     else:
         return jsonify({"success": False, "message": "未找到该任务。"}), 404
 
+@api.route('/scheduler/reconcile', methods=['POST'])
+@login_required
+def reconcile_scheduler_tasks():
+    data = request.get_json()
+    if not data:
+        return jsonify({"success": False, "message": "无效的请求：缺少JSON body。"}), 400
+
+    task_ids = data.get('task_ids')
+    if not task_ids or not isinstance(task_ids, list):
+        return jsonify({"success": False, "message": "缺少或无效的 'task_ids' 参数。"}), 400
+
+    SCHEDULER_HOST = os.environ.get("SCHEDULER_HOST", "localhost")
+    SCHEDULER_PORT = os.environ.get("SCHEDULER_PORT", "5057")
+    url = f"http://{SCHEDULER_HOST}:{SCHEDULER_PORT}/reconcile"
+    payload = {"task_ids": task_ids}
+
+    try:
+        with httpx.Client() as client:
+            response = client.post(url, json=payload, timeout=15)
+        
+        if response.status_code == 200:
+            logger.info(f"成功请求重新调度任务: {task_ids}")
+            return jsonify(response.json())
+        else:
+            logger.error(f"重新调度任务失败，状态码: {response.status_code}, 响应: {response.text}")
+            return jsonify({"success": False, "message": f"Error: {response.status_code} - {response.text}"}), response.status_code
+            
+    except httpx.ConnectError:
+        logger.error(f"无法连接到调度器服务 ({url})")
+        return jsonify({"success": False, "message": "无法连接到调度器服务"}), 503
+    except httpx.RequestError as e:
+        logger.error(f"请求调度器服务时发生错误: {e}")
+        return jsonify({"success": False, "message": f"请求错误: {e}"}), 500
+
+
 @api.route('/checkin/manual', methods=['POST'])
 async def manual_action():
     config = load_config()

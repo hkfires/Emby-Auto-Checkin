@@ -116,7 +116,10 @@
             </select>
         </div>
         <div class="col-md-4">
-            <button id="bulk-delete-btn" class="btn btn-danger w-100" disabled>批量删除</button>
+            <div class="btn-group w-100" role="group">
+                <button id="bulk-delete-btn" class="btn btn-danger" disabled>批量删除</button>
+                <button id="reschedule-selected-btn" class="btn btn-info" disabled>重新调度任务</button>
+            </div>
         </div>
     </div>
 
@@ -135,7 +138,7 @@
             <tbody>
                 {% for task in tasks %}
                     <tr data-user-id="{{ task.user_telegram_id }}" data-bot-id="{{ task.bot_username or '' }}" data-chat-id="{{ task.target_chat_id or '' }}">
-                        <td><input type="checkbox" class="task-checkbox" 
+                        <td><input type="checkbox" class="task-checkbox" name="task_ids" value="{{ task.id }}"
                             data-user-id="{{ task.user_telegram_id }}"
                             data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}"></td>
                         <td>{{ task.display_nickname }} ({{ task.user_telegram_id }})</td>
@@ -306,6 +309,7 @@ $(document).ready(function() {
     $('#tasks-table').on('change', '.task-checkbox', function() {
         const anyChecked = $('.task-checkbox:checked').length > 0;
         $('#bulk-delete-btn').prop('disabled', !anyChecked);
+        $('#reschedule-selected-btn').prop('disabled', !anyChecked);
     });
     
     $('#bulk-delete-btn').on('click', function() {
@@ -335,6 +339,40 @@ $(document).ready(function() {
             }
         })
         .catch(error => showAlert('删除任务时发生网络错误: ' + error, 'danger'));
+    });
+    
+    $('#reschedule-selected-btn').on('click', function() {
+        const selectedTaskIds = $('.task-checkbox:checked').map(function() {
+            const userId = $(this).data('user-id');
+            const identifier = $(this).data('identifier');
+            return `${userId}_${identifier}`;
+        }).get();
+
+        if (selectedTaskIds.length === 0) {
+            alert('请至少选择一个任务');
+            return;
+        }
+
+        fetch('/api/scheduler/reconcile', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ task_ids: selectedTaskIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert(data.message || '任务已成功重新调度。', 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showAlert(data.message || '重新调度任务失败。', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showAlert('重新调度任务时发生网络错误。', 'danger');
+        });
     });
 });
 

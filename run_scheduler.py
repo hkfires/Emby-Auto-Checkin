@@ -1,7 +1,7 @@
 import logging
 import os
 import threading
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from utils.scheduler_api import reconcile_tasks, run_scheduler, log_scheduled_jobs
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -9,14 +9,19 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-@app.route('/reconcile', methods=['POST'])
+@app.route('/reconcile', methods=['POST', 'GET'])
 def trigger_reconciliation():
     logger.info("收到 API 请求，开始执行任务核对...")
+    task_ids = None
+    if request.method == 'POST':
+        data = request.get_json()
+        if data:
+            task_ids = data.get('task_ids')
+
     try:
-        reconcile_tasks()
+        result = reconcile_tasks(force_reschedule_ids=task_ids)
         log_scheduled_jobs()
-        logger.info("任务核对完成。")
-        return jsonify({"success": True, "message": "任务核对成功完成。"}), 200
+        return jsonify({"success": True, "message": "任务重新调度成功。", "result": result}), 200
     except Exception as e:
         logger.error(f"执行任务核对时发生错误: {e}", exc_info=True)
         return jsonify({"success": False, "message": f"内部错误: {e}"}), 500
