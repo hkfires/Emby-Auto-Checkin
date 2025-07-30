@@ -1,6 +1,6 @@
 from datetime import datetime
 import logging
-from checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
+from tgservice.checkin_strategies import STRATEGY_MAPPING, STRATEGY_DISPLAY_NAMES
 
 logger = logging.getLogger(__name__)
 

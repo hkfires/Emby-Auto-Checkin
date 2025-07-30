@@ -67,11 +67,15 @@
       <div class="modal-body">
         <p>验证码已发送至 <strong id="otpPhoneDisplay"></strong>。请输入收到的验证码：</p>
         <input type="text" class="form-control" id="otpCode" placeholder="验证码">
+        <div id="2fa-group" class="form-group mt-3" style="display: none;">
+            <label for="2faPassword">两步验证密码</label>
+            <input type="password" class="form-control" id="2faPassword" placeholder="请输入两步验证密码">
+        </div>
         <input type="hidden" id="otpPhoneHidden">
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
-        <button type="button" class="btn btn-primary" id="submitOtpBtn">提交验证码</button>
+        <button type="button" class="btn btn-primary" id="submitOtpBtn">提交</button>
       </div>
     </div>
   </div>
@@ -89,7 +93,7 @@ $(document).ready(function() {
         addUserBtn.prop('disabled', true).text('处理中...');
 
         $.ajax({
-            url: "{{ url_for('api_add_user') }}",
+            url: "{{ url_for('api.add_user') }}",
             type: 'POST',
             data: { phone: phone },
             dataType: 'json',
@@ -120,28 +124,39 @@ $(document).ready(function() {
     $('#submitOtpBtn').on('click', function() {
         const otpCode = $('#otpCode').val();
         const phone = $('#otpPhoneHidden').val();
+        const password = $('#2faPassword').val();
         $(this).prop('disabled', true).text('验证中...');
 
+        let postData = {
+            phone: phone,
+            otp_code: otpCode,
+            password: password
+        };
+
         $.ajax({
-            url: "{{ url_for('api_submit_otp') }}",
+            url: "{{ url_for('api.submit_otp') }}",
             type: 'POST',
-            data: { phone: phone, otp_code: otpCode },
+            data: postData,
             dataType: 'json',
             success: function(response) {
-                showAlert(response.message, response.success ? 'success' : 'danger');
+                showAlert(response.message, 'success');
                 $('#otpModal').modal('hide');
                 setTimeout(function() { location.reload(); }, 1000);
             },
             error: function(xhr) {
-                let errorMsg = 'OTP验证失败。';
-                if (xhr.responseJSON && xhr.responseJSON.message) {
+                let errorMsg = '验证失败。';
+                if (xhr.responseJSON) {
                     errorMsg = xhr.responseJSON.message;
+                    if (xhr.responseJSON.status === '2fa_needed') {
+                        $('#2fa-group').show();
+                        showAlert('需要两步验证密码，请输入。', 'warning', 'otpModal .modal-body');
+                        return;
+                    }
                 }
                 showAlert(errorMsg, 'danger', 'otpModal .modal-body');
             },
             complete: function() {
-                $('#submitOtpBtn').prop('disabled', false).text('提交验证码');
-                $('#otpCode').val('');
+                $('#submitOtpBtn').prop('disabled', false).text('提交');
             }
         });
     });
@@ -150,7 +165,7 @@ $(document).ready(function() {
         const nickname = $(this).data('nickname');
         if (confirm(`确定要删除用户 ${nickname} 吗？相关的会话文件和签到任务也会被删除。`)) {
             $.ajax({
-                url: "{{ url_for('api_delete_user') }}",
+                url: "{{ url_for('api.delete_user') }}",
                 type: 'POST',
                 data: { nickname: nickname },
                 dataType: 'json',

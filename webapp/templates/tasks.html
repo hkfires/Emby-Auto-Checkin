@@ -1,0 +1,488 @@
+{% extends "base.html" %}
+
+{% block title %}任务管理 - Emby签到助手{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+    .multiselect-container {
+        width: 100%;
+    }
+    .slot-select {
+        border: none;
+        background: transparent;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        cursor: pointer;
+    }
+</style>
+{% endblock %}
+
+
+{% block content %}
+<div class="container mt-4">
+    <h2>任务管理</h2>
+    <p>配置用户与机器人或群组之间的交互任务。</p>
+    <hr>
+
+    <h3>添加新任务</h3>
+    <form id="addTaskForm" class="mb-4">
+        <div class="row">
+            <div class="col-md-4">
+                <div class="form-group row align-items-center">
+                    <label for="user_telegram_ids" class="col-auto col-form-label">选择TG用户:</label>
+                    <div class="col">
+                        <select id="user_telegram_ids" name="user_telegram_ids" multiple="multiple" required>
+                            {% for user in users %}
+                                {% if user.status == 'logged_in' and user.telegram_id %}
+                                    <option value="{{ user.telegram_id }}">{{ user.nickname }} (ID: {{ user.telegram_id }})</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="form-group row align-items-center">
+                    <label for="targets" class="col-auto col-form-label">选择目标:</label>
+                    <div class="col">
+                        <select id="targets" name="targets" multiple="multiple" required>
+                            <optgroup label="机器人">
+                                {% for bot_item in bots %}
+                                    <option value="bot:{{ bot_item.bot_username }}">@{{ bot_item.bot_username }} (默认策略: {{ bot_item.strategy_display_name }})</option>
+                                {% endfor %}
+                            </optgroup>
+                            <optgroup label="群组">
+                                {% for chat_item in chats %}
+                                    <option value="chat:{{ chat_item.chat_id }}">{{ chat_item.chat_title }} (ID: {{ chat_item.chat_id }}, 默认策略: {{ strategy_display_names.get(chat_item.strategy_identifier, chat_item.strategy_identifier) }})</option>
+                                {% endfor %}
+                            </optgroup>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="form-group row align-items-center">
+                    <label for="selected_time_slot_id" class="col-auto col-form-label">选择执行时间段:</label>
+                    <div class="col">
+                        <select class="form-control" id="selected_time_slot_id" name="selected_time_slot_id" required>
+                            <option value="">-- 选择一个时间段 --</option>
+                            {% if scheduler_time_slots %}
+                                {% for slot in scheduler_time_slots %}
+                                    <option value="{{ slot.id }}">{{ slot.name }} ({{ '%02d:%02d'|format(slot.start_hour, slot.start_minute) }} - {{ '%02d:%02d'|format(slot.end_hour, slot.end_minute) }})</option>
+                                {% endfor %}
+                            {% else %}
+                                <option value="" disabled>未配置任何时间段，请先在调度器设置中配置</option>
+                            {% endif %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="message_content_group" class="form-group mt-3" style="display: none;">
+            <label for="message_content">消息内容 (仅对群组目标有效):</label>
+            <textarea class="form-control" id="message_content" name="message_content" rows="3"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary mt-3">添加任务</button>
+    </form>
+
+    <h4>已配置任务</h4>
+    
+    <div class="row mb-3 align-items-end">
+        <div class="col-md-4">
+            <select id="filter-tg-user" class="form-control">
+                <option value="">所有TG用户</option>
+                {% for user in users %}
+                    {% if user.status == 'logged_in' and user.telegram_id %}
+                        <option value="{{ user.telegram_id }}">{{ user.nickname }} ({{ user.telegram_id }})</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <select id="filter-target" class="form-control">
+                <option value="">所有目标</option>
+                <optgroup label="机器人">
+                    {% for bot_item in bots %}
+                        <option value="bot:{{ bot_item.bot_username }}">@{{ bot_item.bot_username }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="群组">
+                    {% for chat_item in chats %}
+                        <option value="chat:{{ chat_item.chat_id }}">{{ chat_item.chat_title }}</option>
+                    {% endfor %}
+                </optgroup>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <div class="btn-group w-100" role="group">
+                <button id="bulk-delete-btn" class="btn btn-danger" disabled>批量删除</button>
+                <button id="reschedule-selected-btn" class="btn btn-info" disabled>重新调度任务</button>
+            </div>
+        </div>
+    </div>
+
+    {% if tasks %}
+        <table class="table table-striped" id="tasks-table">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="select-all-tasks"></th>
+                    <th>用户 (TG号)</th>
+                    <th>目标类型</th>
+                    <th>目标名称</th>
+                    <th>执行时段</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                    <tr data-user-id="{{ task.user_telegram_id }}" data-bot-id="{{ task.bot_username or '' }}" data-chat-id="{{ task.target_chat_id or '' }}">
+                        <td><input type="checkbox" class="task-checkbox" name="task_ids" value="{{ task.id }}"
+                            data-user-id="{{ task.user_telegram_id }}"
+                            data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}"></td>
+                        <td>{{ task.display_nickname }} ({{ task.user_telegram_id }})</td>
+                        <td>{{ '机器人' if task.target_type == 'bot' else '群组' }}</td>
+                        <td>{{ task.target_name }}</td>
+                        <td>
+                            <select class="form-control form-control-sm slot-select" onchange="updateTaskSlot(this)"
+                                data-user-id="{{ task.user_telegram_id }}"
+                                data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}">
+                                {% for slot in scheduler_time_slots %}
+                                    <option value="{{ slot.id }}" {% if slot.id == task.selected_time_slot_id %}selected{% endif %}>
+                                        {{ slot.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                        <td class="action-buttons">
+                            <button class="btn btn-info btn-sm" onclick="manualActionFromData(this)"
+                                data-user-id="{{ task.user_telegram_id }}"
+                                data-target-type="{{ task.target_type }}"
+                                data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}">
+                                手动执行
+                            </button>
+                            {% if task.target_type == 'chat' %}
+                            <button class="btn btn-secondary btn-sm" onclick="openEditModal(this)"
+                                data-user-id="{{ task.user_telegram_id }}"
+                                data-identifier="{{ task.target_chat_id }}"
+                                data-message="{{ task.message_content_display | default('', true) }}">
+                                编辑消息
+                            </button>
+                            {% endif %}
+                            <button class="btn btn-danger btn-sm" onclick="deleteSingleTask(this)"
+                                data-user-id="{{ task.user_telegram_id }}"
+                                data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}">
+                                删除
+                            </button>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>尚未配置任何任务。</p>
+    {% endif %}
+</div>
+
+<div class="modal fade" id="editMessageModal" tabindex="-1" role="dialog" aria-labelledby="editMessageModalLabel" aria-hidden="true">
+   <div class="modal-dialog" role="document">
+       <div class="modal-content">
+           <div class="modal-header">
+               <h5 class="modal-title" id="editMessageModalLabel">编辑消息内容</h5>
+               <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                   <span aria-hidden="true">&times;</span>
+               </button>
+           </div>
+           <div class="modal-body">
+               <form id="editMessageForm">
+                   <input type="hidden" id="edit-user-id" name="user_telegram_id">
+                   <input type="hidden" id="edit-identifier" name="identifier">
+                   <div class="form-group">
+                       <label for="edit-message-content">消息内容</label>
+                       <textarea class="form-control" id="edit-message-content" name="message_content" rows="5"></textarea>
+                   </div>
+               </form>
+           </div>
+           <div class="modal-footer">
+               <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+               <button type="button" class="btn btn-primary" onclick="saveMessageChanges()">保存更改</button>
+           </div>
+       </div>
+   </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+$(document).ready(function() {
+    $('#user_telegram_ids, #targets').multiselect({
+        buttonClass: 'btn btn-light border',
+        enableFiltering: true,
+        nonSelectedText: '请选择...',
+        allSelectedText: '已全选',
+        nSelectedText: '个已选择',
+        buttonText: function(options, select) {
+            if (options.length === 0) {
+                return '请选择...';
+            } else if (options.length === $('option', $(select)).length) {
+                return '已全选';
+            } else {
+                return options.length + ' 个已选择';
+            }
+        },
+        templates: {
+            filter: '<li class="multiselect-item multiselect-filter"><div class="p-2"><input class="form-control multiselect-search" type="text" placeholder="搜索..."></div></li>'
+        }
+    });
+
+    $('#targets').on('change', function() {
+        const selectedOptions = $(this).val();
+        let hasChat = false;
+        if (selectedOptions) {
+            selectedOptions.forEach(function(option) {
+                if (option.startsWith('chat:')) {
+                    hasChat = true;
+                }
+            });
+        }
+        $('#message_content_group').toggle(hasChat);
+    });
+ 
+     $('#addTaskForm').on('submit', function(e) {
+         e.preventDefault();
+        const params = new URLSearchParams();
+        
+        $('#user_telegram_ids').val().forEach(id => params.append('user_telegram_ids[]', id));
+        $('#targets').val().forEach(target => params.append('targets[]', target));
+        params.append('selected_time_slot_id', $('#selected_time_slot_id').val());
+        params.append('message_content', $('#message_content').val());
+
+        fetch("{{ url_for('api.add_tasks_batch') }}", {
+            method: 'POST',
+            body: params
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert(data.message, 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showAlert(data.message, 'danger');
+            }
+        })
+        .catch(error => showAlert('添加任务时发生网络错误: ' + error, 'danger'));
+    });
+
+    $('#filter-tg-user, #filter-target').on('change', function() {
+        const tgId = $('#filter-tg-user').val();
+        const targetFilter = $('#filter-target').val();
+        
+        let targetType = '';
+        let targetId = '';
+        if (targetFilter) {
+            [targetType, targetId] = targetFilter.split(':', 2);
+        }
+
+        $('#tasks-table tbody tr').each(function() {
+            const row = $(this);
+            const showUser = (tgId === '' || row.data('user-id') == tgId);
+            
+            let showTarget = false;
+            if (!targetFilter) {
+                showTarget = true;
+            } else if (targetType === 'bot') {
+                showTarget = (row.data('bot-id') == targetId);
+            } else if (targetType === 'chat') {
+                showTarget = (row.data('chat-id') == targetId);
+            }
+            
+            row.toggle(showUser && showTarget);
+        });
+    });
+
+    $('#select-all-tasks').on('change', function() {
+        $('#tasks-table tbody tr:visible .task-checkbox').prop('checked', this.checked).trigger('change');
+    });
+
+    $('#tasks-table').on('change', '.task-checkbox', function() {
+        const anyChecked = $('.task-checkbox:checked').length > 0;
+        $('#bulk-delete-btn').prop('disabled', !anyChecked);
+        $('#reschedule-selected-btn').prop('disabled', !anyChecked);
+    });
+    
+    $('#bulk-delete-btn').on('click', function() {
+        const selectedTasks = [];
+        $('.task-checkbox:checked').each(function() {
+            selectedTasks.push({
+                user_telegram_id: parseInt($(this).data('user-id')),
+                identifier: $(this).data('identifier')
+            });
+        });
+
+        if (selectedTasks.length === 0) return;
+        if (!confirm(`确定要删除选中的 ${selectedTasks.length} 个任务吗？`)) return;
+
+        fetch("{{ url_for('api.delete_tasks_batch') }}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tasks: selectedTasks })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert(data.message, 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showAlert(data.message, 'danger');
+            }
+        })
+        .catch(error => showAlert('删除任务时发生网络错误: ' + error, 'danger'));
+    });
+    
+    $('#reschedule-selected-btn').on('click', function() {
+        const selectedTaskIds = $('.task-checkbox:checked').map(function() {
+            const userId = $(this).data('user-id');
+            const identifier = $(this).data('identifier');
+            return `${userId}_${identifier}`;
+        }).get();
+
+        if (selectedTaskIds.length === 0) {
+            alert('请至少选择一个任务');
+            return;
+        }
+
+        fetch('/api/scheduler/reconcile', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ task_ids: selectedTaskIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert(data.message || '任务已成功重新调度。', 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showAlert(data.message || '重新调度任务失败。', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showAlert('重新调度任务时发生网络错误。', 'danger');
+        });
+    });
+});
+
+function updateTaskSlot(selectElement) {
+    const { userId, identifier } = selectElement.dataset;
+    const newSlotId = selectElement.value;
+
+    const formData = new URLSearchParams();
+    formData.append('user_telegram_id', userId);
+    formData.append('identifier', identifier);
+    formData.append('selected_time_slot_id', newSlotId);
+
+    fetch("{{ url_for('api.update_task_slot') }}", {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert('任务时间段已更新。', 'success');
+        } else {
+            showAlert('更新失败: ' + data.message, 'danger');
+        }
+    })
+    .catch(error => {
+        showAlert('更新时发生网络错误: ' + error, 'danger');
+    });
+}
+
+function deleteSingleTask(buttonElement) {
+    const { userId, identifier } = buttonElement.dataset;
+    if (!confirm(`确定要删除这个任务吗？`)) return;
+
+    const taskToDelete = [{ user_telegram_id: parseInt(userId), identifier: identifier }];
+
+    fetch("{{ url_for('api.delete_tasks_batch') }}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tasks: taskToDelete })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            showAlert(data.message, 'danger');
+        }
+    })
+    .catch(error => showAlert('删除任务时发生网络错误: ' + error, 'danger'));
+}
+
+function manualActionFromData(buttonElement) {
+    const { userId, targetType, identifier } = buttonElement.dataset;
+    const originalButtonText = buttonElement.innerHTML;
+    buttonElement.innerHTML = '处理中...';
+    buttonElement.disabled = true;
+
+    const payload = new URLSearchParams({
+        user_telegram_id: userId,
+        target_type: targetType,
+        identifier: identifier
+    });
+
+    fetch("{{ url_for('api.manual_action') }}", {
+        method: 'POST',
+        body: payload
+    })
+    .then(response => response.json())
+    .then(data => {
+        showAlert(data.message, data.success ? 'success' : 'danger');
+        buttonElement.innerHTML = originalButtonText;
+        buttonElement.disabled = false;
+    })
+    .catch(error => {
+        showAlert('手动执行时发生网络错误: ' + error, 'danger');
+        buttonElement.innerHTML = originalButtonText;
+        buttonElement.disabled = false;
+    });
+}
+
+function openEditModal(buttonElement) {
+   const { userId, identifier, message } = buttonElement.dataset;
+   $('#edit-user-id').val(userId);
+   $('#edit-identifier').val(identifier);
+   $('#edit-message-content').val(message);
+   $('#editMessageModal').modal('show');
+}
+
+function saveMessageChanges() {
+   const form = document.getElementById('editMessageForm');
+   const formData = new FormData(form);
+   const data = Object.fromEntries(formData.entries());
+
+   fetch("{{ url_for('api.update_task_message') }}", {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+       body: new URLSearchParams(data)
+   })
+   .then(response => response.json())
+   .then(data => {
+       if (data.success) {
+           showAlert(data.message, 'success');
+           $('#editMessageModal').modal('hide');
+           setTimeout(() => window.location.reload(), 1000);
+       } else {
+           showAlert(data.message, 'danger');
+       }
+   })
+   .catch(error => showAlert('更新消息时发生网络错误: ' + error, 'danger'));
+}
+</script>
+{% endblock %}

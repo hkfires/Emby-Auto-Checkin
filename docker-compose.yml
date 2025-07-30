@@ -8,13 +8,39 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
-    command: gunicorn -w 1 -b 0.0.0.0:5055 app:app
+    depends_on:
+      - tgservice
+      - scheduler
+    environment:
+      - TG_SERVICE_HOST=tgservice
+      - TG_SERVICE_PORT=5056
+      - SCHEDULER_HOST=scheduler
+      - SCHEDULER_PORT=5057
+    command: gunicorn -w 1 -b 0.0.0.0:5055 'run_webapp:create_app()'
 
   scheduler:
     build: .
     image: emby-auto-checkin:latest
     container_name: emby-auto-checkin-scheduler
+    ports:
+      - "5057:5057"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
-    command: python run_scheduler.py
+    depends_on:
+      - tgservice
+    environment:
+      - TG_SERVICE_HOST=tgservice
+      - TG_SERVICE_PORT=5056
+    command: gunicorn -w 1 -b 0.0.0.0:5057 'run_scheduler:app'
+
+  tgservice:
+    build: .
+    image: emby-auto-checkin:latest
+    container_name: emby-auto-checkin-tg-service
+    ports:
+      - "5056:5056"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    command: uvicorn tgservice.main:app --host 0.0.0.0 --port 5056

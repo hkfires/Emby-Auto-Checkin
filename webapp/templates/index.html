@@ -8,7 +8,7 @@
     <p class="lead">通过本面板管理您的Telegram API设置、用户、机器人以及自动签到任务。</p>
     <hr class="my-4">
     <p>如果这是您首次使用，请先前往“API设置”页面配置您的Telegram API ID和API Hash。</p>
-    <a class="btn btn-primary btn-lg" href="{{ url_for('api_settings_page') }}" role="button">API设置</a>
+    <a class="btn btn-primary btn-lg" href="{{ url_for('views.api_settings_page') }}" role="button">API设置</a>
 </div>
 
 <h2>快速操作</h2>
@@ -44,10 +44,10 @@
             {% endfor %}
             </ul>
         {% else %}
-            <p>自动签到任务已启用，但尚未配置任何有效的时间段。请前往“<a href="{{ url_for('scheduler_settings_page') }}">自动签到设置</a>”页面进行配置。</p>
+            <p>自动签到任务已启用，但尚未配置任何有效的时间段。请前往“<a href="{{ url_for('views.scheduler_settings_page') }}">自动签到设置</a>”页面进行配置。</p>
         {% endif %}
     {% else %}
-        <p>自动签到任务当前已禁用。您可以前往“<a href="{{ url_for('scheduler_settings_page') }}">自动签到设置</a>”页面启用并配置。</p>
+        <p>自动签到任务当前已禁用。您可以前往“<a href="{{ url_for('views.scheduler_settings_page') }}">自动签到设置</a>”页面启用并配置。</p>
     {% endif %}
 {% endif %}
 
@@ -123,7 +123,7 @@ $(document).ready(function() {
     $('#checkinAllBtn').on('click', function() {
         $(this).prop('disabled', true).text('正在执行...');
         $.ajax({
-            url: "{{ url_for('api_execute_all_tasks_http') }}",
+            url: "{{ url_for('api.execute_all_tasks_http') }}",
             type: 'POST',
             dataType: 'json',
             success: function(response) {

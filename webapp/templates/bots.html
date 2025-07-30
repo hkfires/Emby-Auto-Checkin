@@ -4,13 +4,13 @@
 
 {% block content %}
 <h2>机器人管理</h2>
-<p>添加需要进行签到的Telegram机器人用户名 (例如 YounoEmby_bot)。</p>
+<p>添加需要进行签到的Telegram机器人用户名。</p>
 
 <form id="addBotForm" class="mb-4">
     <div class="form-row align-items-end">
         <div class="col-md-5">
             <label for="bot_username_input">机器人用户名</label>
-            <input type="text" class="form-control" id="bot_username_input" name="bot_username" placeholder="输入机器人用户名 (不带@)" required>
+            <input type="text" class="form-control" id="bot_username_input" name="bot_username" placeholder="输入机器人用户名" required>
         </div>
         <div class="col-md-4">
             <label for="bot_strategy_select">签到策略</label>
@@ -40,7 +40,7 @@
     <tbody>
         {% for bot_item in bots %}
         <tr>
-            <td class="align-middle">{{ bot_item.bot_username }}</td>
+            <td class="align-middle">@{{ bot_item.bot_username }}</td>
             <td class="align-middle"><span class="badge bg-primary text-white py-2 px-2">{{ bot_item.strategy_display_name | default(bot_item.strategy) }}</span></td>
             <td class="align-middle">
                 <button class="btn btn-info btn-sm manual-checkin-btn" data-bot="{{ bot_item.bot_username }}" data-strategy="{{ bot_item.strategy }}" {% if not users or users | selectattr('status', 'equalto', 'logged_in') | list | length == 0 %}disabled title="没有已登录的用户可用于签到"{% endif %}>
@@ -96,7 +96,7 @@ $(document).ready(function() {
         const bot_username = $('#bot_username_input').val();
         const strategy = $('#bot_strategy_select').val();
         $.ajax({
-            url: "{{ url_for('api_add_bot') }}",
+            url: "{{ url_for('api.add_bot') }}",
             type: 'POST',
             data: { bot_username: bot_username, strategy: strategy },
             dataType: 'json',
@@ -120,7 +120,7 @@ $(document).ready(function() {
         const bot_username = $(this).data('bot');
         if (confirm(`确定要删除机器人 @${bot_username} 吗？相关的签到任务也会被删除。`)) {
             $.ajax({
-                url: "{{ url_for('api_delete_bot') }}",
+                url: "{{ url_for('api.delete_bot') }}",
                 type: 'POST',
                 data: { bot_username: bot_username },
                 dataType: 'json',
@@ -162,7 +162,7 @@ $(document).ready(function() {
         $('#manual-checkin-result-area').html('<p class="text-info">正在尝试签到...</p>');
 
         $.ajax({
-            url: "{{ url_for('api_manual_action') }}",
+            url: "{{ url_for('api.manual_action') }}",
             type: 'POST',
             data: { 
                 user_telegram_id: userTelegramId, 

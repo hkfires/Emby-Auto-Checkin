@@ -4,11 +4,9 @@ DATA_DIR = "data"
 CONFIG_FILE = os.path.join(DATA_DIR, 'config_data.json')
 
 def _get_default_time_slot():
-    """Returns the default time slot configuration."""
-    return {"id": 1, "name": "默认时段", "start_hour": 8, "start_minute": 0, "end_hour": 22, "end_minute": 0}
+    return {"id": 1, "name": "默认时段", "start_hour": 8, "start_minute": 0, "start_second": 0, "end_hour": 22, "end_minute": 0, "end_second": 0}
 
 def _get_default_config():
-    """Returns the default configuration structure."""
     cfg = {
         "api_id": None,
         "api_hash": None,
@@ -34,7 +32,6 @@ def _get_default_config():
     return cfg
 
 def load_config():
-    """Loads the configuration from the JSON file, handling migration from older formats."""
     if not os.path.exists(CONFIG_FILE):
         default_config = _get_default_config()
         save_config(default_config)
@@ -80,8 +77,8 @@ def load_config():
             start_m = config.pop("scheduler_time_minute", 0)
             config["scheduler_time_slots"] = [{
                 "id": 1, "name": "迁移时段 (旧)",
-                "start_hour": start_h, "start_minute": start_m,
-                "end_hour": 22, "end_minute": 0
+                "start_hour": start_h, "start_minute": start_m, "start_second": 0,
+                "end_hour": 22, "end_minute": 0, "end_second": 0
             }]
             migrated_to_slots_this_run = True
         else:
@@ -98,31 +95,35 @@ def load_config():
 
     default_slot_id_for_tasks = 1
     if config["scheduler_time_slots"] and isinstance(config["scheduler_time_slots"][0], dict):
+        for slot in config["scheduler_time_slots"]:
+            slot.setdefault("start_second", 0)
+            slot.setdefault("end_second", 0)
         first_slot_id = config["scheduler_time_slots"][0].get("id")
         if isinstance(first_slot_id, int):
              default_slot_id_for_tasks = first_slot_id
         
     for task in config.get("checkin_tasks", []):
-        task.setdefault("last_auto_checkin_status", None)
-        task.setdefault("last_auto_checkin_time", None)
-        task.setdefault("last_scheduled_date", None)
-        task.setdefault("scheduled_hour", None) 
-        task.setdefault("scheduled_minute", None)
-        
         if "selected_time_slot_id" not in task or migrated_to_slots_this_run:
             task["selected_time_slot_id"] = default_slot_id_for_tasks
-            
-    config.pop("scheduler_range_start_hour", None)
-    config.pop("scheduler_range_start_minute", None)
-    config.pop("scheduler_range_end_hour", None)
-    config.pop("scheduler_range_end_minute", None)
-    config.pop("scheduler_time_hour", None)
-    config.pop("scheduler_time_minute", None)
             
     return config
 
 def save_config(config_data):
-    """Saves the configuration data to the JSON file."""
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+def migrate_session_names():
+    config = load_config()
+    migrated = False
+    for user in config.get('users', []):
+        session_name = user.get('session_name')
+        if session_name and ('/' in session_name or '\\' in session_name):
+            base_name = os.path.basename(session_name)
+            clean_name = os.path.splitext(base_name)[0]
+            user['session_name'] = clean_name
+            migrated = True
+    
+    if migrated:
+        save_config(config)
+        print("Configuration updated: Session names have been migrated to the new format.")

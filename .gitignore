@@ -1,5 +1,7 @@
 __pycache__
+.vscode
 .venv
+.conda
 data
 *.session
 *.json

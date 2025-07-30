@@ -38,7 +38,7 @@
                 {% endfor %}
             {% endif %}
         {% endwith %}
-        <form method="POST" action="{{ url_for('login') }}">
+        <form method="POST" action="{{ url_for('auth.login') }}">
             <div class="form-group">
                 <label for="username">用户名</label>
                 <input type="text" class="form-control" id="username" name="username" required>
@@ -54,7 +54,7 @@
             <button type="submit" class="btn btn-primary btn-block">登录 / 注册</button>
         </form>
         <script>
-            fetch("{{ url_for('check_first_run_status') }}")
+            fetch("{{ url_for('views.check_first_run_status') }}")
                 .then(response => response.json())
                 .then(data => {
                     if (data.is_first_run) {
