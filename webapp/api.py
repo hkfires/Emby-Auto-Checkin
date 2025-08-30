@@ -1,4 +1,5 @@
 import logging, os, asyncio, httpx, base64, json, threading
+from openai import AsyncOpenAI
 from flask import Blueprint, request, jsonify, current_app, flash
 from flask_login import login_required
 from utils.config import load_config, save_config
@@ -20,12 +21,10 @@ async def test_llm_connection():
     if not all([base_api_url, api_key, model_name]):
         return jsonify({"success": False, "message": "API URL, API Key 和模型名称均不能为空。"}), 400
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    chat_url = f"{base_api_url}/v1/chat/completions"
+    client = AsyncOpenAI(
+        base_url=f"{base_api_url}/v1",
+        api_key=api_key,
+    )
 
     image_path = os.path.join(current_app.static_folder, 'test_image.png')
     if not os.path.exists(image_path):
@@ -44,45 +43,17 @@ async def test_llm_connection():
         }
     ]
 
-    json_data = {
-        "model": model_name,
-        "messages": messages,
-        "stream": True
-    }
-
     try:
         full_content = ""
-        async with httpx.AsyncClient() as client:
-            async with client.stream("POST", chat_url, headers=headers, json=json_data, timeout=60) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    return jsonify({"success": False, "message": f"连接失败 (状态码: {response.status_code})。URL: {chat_url}, 错误信息: {error_text.decode()}"})
-
-                try:
-                    async for line in response.aiter_lines():
-                        if line.startswith('data: '):
-                            data_str = line[len('data: '):]
-                            if data_str.strip() == '[DONE]':
-                                break
-                            try:
-                                chunk = json.loads(data_str)
-                                choices = chunk.get("choices")
-                                if not isinstance(choices, list) or len(choices) == 0:
-                                    logger.debug(f"LLM SSE 帧缺少有效 choices，已跳过。原始: {data_str[:200]}")
-                                    continue
-                                first_choice = choices[0] if isinstance(choices[0], dict) else {}
-                                delta = first_choice.get("delta", {}) if isinstance(first_choice, dict) else {}
-                                content_piece = delta.get("content")
-                                if content_piece:
-                                    full_content += content_piece
-                                else:
-                                    logger.debug(f"LLM SSE 帧无 content 字段，已跳过。片段: {data_str[:200]}")
-                            except json.JSONDecodeError:
-                                logger.warning(f"无法解析SSE中的JSON数据: {data_str}")
-                                continue
-                except Exception as e:
-                    logger.error(f"处理LLM API流式响应时出错: {e}", exc_info=True)
-                    return jsonify({"success": False, "message": f"处理流式响应时出错: {e}"})
+        stream = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            stream=True,
+            timeout=60
+        )
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                full_content += chunk.choices[0].delta.content
 
         if full_content:
             if full_content.strip() == "路由器":
@@ -106,11 +77,8 @@ async def test_llm_connection():
             message = "连接成功，但未能从API响应中解析出任何有效内容。"
             return jsonify({"success": False, "message": message})
 
-    except httpx.RequestError as e:
-        logger.error(f"测试LLM API连接时发生请求错误: {e}", exc_info=True)
-        return jsonify({"success": False, "message": f"请求失败: {e}"}), 500
     except Exception as e:
-        logger.error(f"测试LLM API连接时发生未知错误: {e}", exc_info=True)
+        logger.error(f"测试LLM API连接时发生未知错误: {e}")
         return jsonify({"success": False, "message": f"发生未知错误: {e}"}), 500
 
 @api.route('/llm/models', methods=['POST'])
@@ -122,23 +90,18 @@ async def get_llm_models():
     if not all([base_api_url, api_key]):
         return jsonify({"success": False, "message": "API URL 和 API Key 均不能为空。"}), 400
 
-    headers = {"Authorization": f"Bearer {api_key}"}
-    models_url = f"{base_api_url}/v1/models"
+    client = AsyncOpenAI(
+        base_url=f"{base_api_url}/v1",
+        api_key=api_key,
+    )
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(models_url, headers=headers, timeout=20)
-            if response.status_code == 200:
-                models_data = response.json().get('data', [])
-                return jsonify({"success": True, "models": models_data})
-            else:
-                return jsonify({"success": False, "message": f"获取模型列表失败 (状态码: {response.status_code})。URL: {models_url}, 错误: {response.text}"})
-    except httpx.RequestError as e:
-        logger.error(f"获取LLM模型列表时发生请求错误: {e}", exc_info=True)
-        return jsonify({"success": False, "message": f"请求失败: {e}"}), 500
+        models = await client.models.list()
+        models_data = [model.dict() for model in models.data]
+        return jsonify({"success": True, "models": models_data})
     except Exception as e:
-        logger.error(f"获取LLM模型列表时发生未知错误: {e}", exc_info=True)
-        return jsonify({"success": False, "message": f"发生未知错误: {e}"}), 500
+        logger.error(f"获取LLM模型列表时发生错误: {e}")
+        return jsonify({"success": False, "message": f"发生错误: {e}"}), 500
 
 @api.route('/users/add', methods=['POST'])
 async def add_user():

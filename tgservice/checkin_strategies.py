@@ -1,4 +1,5 @@
 import asyncio, re, base64, httpx, io, json
+from openai import AsyncOpenAI
 from telethon import events, errors
 from utils.config import load_config
 
@@ -56,7 +57,7 @@ class CheckinStrategy:
                             return None
                         return await button.click()
                     except Exception as e:
-                        self.logger.error(f"用户 {self.nickname_for_logging}: 点击按钮 '{current_button_text}' (消息 ID {message_obj.id}) 失败: {e}", exc_info=True)
+                        self.logger.error(f"用户 {self.nickname_for_logging}: 点击按钮 '{current_button_text}' (消息 ID {message_obj.id}) 失败: {e}")
                         return e
         self.logger.warning(f"用户 {self.nickname_for_logging}: 在消息 ID {message_obj.id} 中未找到符合关键词 '{keywords}' 的按钮。")
         return None
@@ -210,7 +211,7 @@ class CheckinCommandTextStrategy(CheckinStrategy):
             self.logger.warning(f"用户 {self.nickname_for_logging}: 等待响应超时。")
             result = {"success": False, "message": "等待响应超时。"}
         except Exception as e:
-            self.logger.error(f"用户 {self.nickname_for_logging}: 处理响应时发生错误: {e}", exc_info=True)
+            self.logger.error(f"用户 {self.nickname_for_logging}: 处理响应时发生错误: {e}")
             result = {"success": False, "message": f"处理响应时发生错误: {e}"}
             
         return result
@@ -233,7 +234,7 @@ class SendMessageToChatStrategy(CheckinStrategy):
             self.logger.error(f"用户 {self.nickname_for_logging}: 没有权限向 {target_display_name} 发送消息。")
             return {"success": False, "message": f"没有权限向 {target_display_name} 发送消息。"}
         except Exception as e:
-            self.logger.error(f"用户 {self.nickname_for_logging}: 发送消息到 {target_display_name} 时发生错误: {e}", exc_info=True)
+            self.logger.error(f"用户 {self.nickname_for_logging}: 发送消息到 {target_display_name} 时发生错误: {e}")
             return {"success": False, "message": f"发送消息时发生错误: {e}"}
 
 class MathCaptchaStrategy(CheckinStrategy):
@@ -449,7 +450,7 @@ class MathCaptchaStrategy(CheckinStrategy):
             else:
                  current_result = {"success": False, "message": f"操作超时，当前验证码阶段状态: {current_captcha_state}, 部分结果: {current_result.get('message')}"}
         except Exception as e_execute:
-            self.logger.error(f"用户 {self.nickname_for_logging}: MathCaptchaStrategy execute 发生意外错误: {e_execute}", exc_info=True)
+            self.logger.error(f"用户 {self.nickname_for_logging}: MathCaptchaStrategy execute 发生意外错误: {e_execute}")
             current_result = {"success": False, "message": f"执行策略时发生意外错误: {e_execute}"}
         finally:
             if active_captcha_handler and self.client and self.client.is_connected():
@@ -477,75 +478,44 @@ class VisionCaptchaStrategy(CheckinStrategy):
         if not self.base_api_url or not self.api_key or not self.model_name:
             return {"success": False, "message": "LLM API未配置，请在API设置中完成配置。"}
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        client = AsyncOpenAI(
+            base_url=f"{self.base_api_url}/v1",
+            api_key=self.api_key,
+        )
         
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
         options_text = ", ".join([f"'{opt}'" for opt in options])
         prompt_text = f"请根据图片内容，从以下选项中选择最匹配的一个，并只返回该选项的文本，不要包含其他任何内容。选项: {options_text}"
 
-        json_data = {
-            "model": self.model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt_text},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }
-            ],
-            "stream": True
-        }
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt_text},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                ]
+            }
+        ]
 
         try:
             self.logger.info(f"用户 {self.nickname_for_logging}: 正在调用 Vision API。模型: {self.model_name}, 提示: {prompt_text}")
             full_content = ""
-            async with httpx.AsyncClient() as client:
-                chat_url = f"{self.base_api_url}/v1/chat/completions"
-                async with client.stream("POST", chat_url, headers=headers, json=json_data, timeout=60) as response:
-                    if response.status_code != 200:
-                        error_text = await response.aread()
-                        self.logger.error(f"用户 {self.nickname_for_logging}: 调用 Vision API 失败 (状态码: {response.status_code})。URL: {chat_url}, 错误信息: {error_text.decode()}")
-                        return {"success": False, "message": f"调用 Vision API 失败 (状态码: {response.status_code})。"}
-
-                    try:
-                        async for line in response.aiter_lines():
-                            if line.startswith('data: '):
-                                data_str = line[len('data: '):]
-                                if data_str.strip() == '[DONE]':
-                                    break
-                                try:
-                                    chunk = json.loads(data_str)
-                                    choices = chunk.get("choices")
-                                    if not isinstance(choices, list) or len(choices) == 0:
-                                        self.logger.debug(f"用户 {self.nickname_for_logging}: Vision API SSE 帧缺少有效 choices，已跳过。原始: {data_str[:200]}")
-                                        continue
-                                    first_choice = choices[0] if isinstance(choices[0], dict) else {}
-                                    delta = first_choice.get("delta", {}) if isinstance(first_choice, dict) else {}
-                                    content_piece = delta.get("content")
-                                    if content_piece:
-                                        full_content += content_piece
-                                    else:
-                                        self.logger.debug(f"用户 {self.nickname_for_logging}: Vision API SSE 帧无 content 字段，已跳过。片段: {data_str[:200]}")
-                                except json.JSONDecodeError:
-                                    self.logger.warning(f"用户 {self.nickname_for_logging}: 无法解析Vision API的SSE JSON数据: {data_str}")
-                                    continue
-                    except Exception as e:
-                        self.logger.error(f"用户 {self.nickname_for_logging}: 处理Vision API流式响应时出错: {e}", exc_info=True)
-                        return {"success": False, "message": f"处理流式响应时出错: {e}"}
+            stream = await client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                stream=True,
+                timeout=60
+            )
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    full_content += chunk.choices[0].delta.content
 
             self.logger.info(f"用户 {self.nickname_for_logging}: Vision API 完整响应: {full_content}")
             return {"success": True, "content": full_content.strip()}
 
-        except httpx.RequestError as e:
-            self.logger.error(f"用户 {self.nickname_for_logging}: 调用 Vision API 失败: {e}")
-            return {"success": False, "message": f"调用 Vision API 失败: {e}"}
         except Exception as e:
-            self.logger.error(f"用户 {self.nickname_for_logging}: 调用或解析 Vision API 响应时发生未知错误: {e}", exc_info=True)
+            self.logger.error(f"用户 {self.nickname_for_logging}: 调用或解析 Vision API 响应时发生未知错误: {e}")
             return {"success": False, "message": f"解析 Vision API 响应失败: {e}"}
 
     async def execute(self):
@@ -631,7 +601,7 @@ class VisionCaptchaStrategy(CheckinStrategy):
             self.logger.warning(f"用户 {self.nickname_for_logging}: 消息未修改，这通常是良性的，但表明没有新内容。")
             return {"success": False, "message": "消息无变化，可能操作已完成或无新动态。"}
         except Exception as e:
-            self.logger.error(f"用户 {self.nickname_for_logging}: VisionCaptchaStrategy 执行时发生意外错误: {e}", exc_info=True)
+            self.logger.error(f"用户 {self.nickname_for_logging}: VisionCaptchaStrategy 执行时发生意外错误: {e}")
             return {"success": False, "message": f"执行图片验证码策略时发生未知错误: {e}"}
 
 STRATEGY_MAPPING = {
