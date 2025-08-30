@@ -1,5 +1,4 @@
 import logging
-import os
 import threading
 from flask import Flask, jsonify, request
 from utils.scheduler_api import reconcile_tasks, run_scheduler, log_scheduled_jobs

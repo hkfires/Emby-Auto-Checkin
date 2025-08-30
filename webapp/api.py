@@ -66,10 +66,17 @@ async def test_llm_connection():
                                 break
                             try:
                                 chunk = json.loads(data_str)
-                                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                choices = chunk.get("choices")
+                                if not isinstance(choices, list) or len(choices) == 0:
+                                    logger.debug(f"LLM SSE 帧缺少有效 choices，已跳过。原始: {data_str[:200]}")
+                                    continue
+                                first_choice = choices[0] if isinstance(choices[0], dict) else {}
+                                delta = first_choice.get("delta", {}) if isinstance(first_choice, dict) else {}
                                 content_piece = delta.get("content")
                                 if content_piece:
                                     full_content += content_piece
+                                else:
+                                    logger.debug(f"LLM SSE 帧无 content 字段，已跳过。片段: {data_str[:200]}")
                             except json.JSONDecodeError:
                                 logger.warning(f"无法解析SSE中的JSON数据: {data_str}")
                                 continue

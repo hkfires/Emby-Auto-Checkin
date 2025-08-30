@@ -520,10 +520,17 @@ class VisionCaptchaStrategy(CheckinStrategy):
                                     break
                                 try:
                                     chunk = json.loads(data_str)
-                                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                    choices = chunk.get("choices")
+                                    if not isinstance(choices, list) or len(choices) == 0:
+                                        self.logger.debug(f"用户 {self.nickname_for_logging}: Vision API SSE 帧缺少有效 choices，已跳过。原始: {data_str[:200]}")
+                                        continue
+                                    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+                                    delta = first_choice.get("delta", {}) if isinstance(first_choice, dict) else {}
                                     content_piece = delta.get("content")
                                     if content_piece:
                                         full_content += content_piece
+                                    else:
+                                        self.logger.debug(f"用户 {self.nickname_for_logging}: Vision API SSE 帧无 content 字段，已跳过。片段: {data_str[:200]}")
                                 except json.JSONDecodeError:
                                     self.logger.warning(f"用户 {self.nickname_for_logging}: 无法解析Vision API的SSE JSON数据: {data_str}")
                                     continue
