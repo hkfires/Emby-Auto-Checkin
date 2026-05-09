@@ -93,8 +93,8 @@ class CheckinStrategy:
                 else:
                     self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 未导致按钮点击 (或点击失败)。结果已记录，事件已设置。")
         
-        handler_new_msg = self.client.add_event_handler(temp_handler, events.NewMessage(chats=self.target_entity.id, from_users=self.target_entity.id))
-        handler_edit_msg = self.client.add_event_handler(temp_handler, events.MessageEdited(chats=self.target_entity.id, from_users=self.target_entity.id))
+        self.client.add_event_handler(temp_handler, events.NewMessage(chats=self.target_entity.id, from_users=self.target_entity.id))
+        self.client.add_event_handler(temp_handler, events.MessageEdited(chats=self.target_entity.id, from_users=self.target_entity.id))
         
         target_display_name_log = getattr(self.target_entity, 'username', getattr(self.target_entity, 'title', str(self.target_entity.id)))
         self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 等待来自 {target_display_name_log} 的初始响应 (超时: {self.timeout_seconds} 秒)...")
@@ -105,9 +105,8 @@ class CheckinStrategy:
             self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 等待初始响应超时。")
             result_holder["value"] = (None, None, asyncio.TimeoutError("等待初始响应超时"))
         finally:
-            if self.client and self.client.is_connected():
-                self.client.remove_event_handler(handler_new_msg)
-                self.client.remove_event_handler(handler_edit_msg)
+            if self.client:
+                self.client.remove_event_handler(temp_handler)
         
         return result_holder["value"]
 
@@ -385,8 +384,6 @@ class MathCaptchaStrategy(CheckinStrategy):
 
         active_captcha_handler = None
         try:
-            @self.client.on(events.NewMessage(chats=self.target_entity.id, from_users=self.target_entity.id))
-            @self.client.on(events.MessageEdited(chats=self.target_entity.id, from_users=self.target_entity.id))
             async def captcha_message_handler(event):
                 nonlocal current_result, current_captcha_state
                 
@@ -453,10 +450,9 @@ class MathCaptchaStrategy(CheckinStrategy):
             self.logger.error(f"用户 {self.nickname_for_logging}: MathCaptchaStrategy execute 发生意外错误: {e_execute}")
             current_result = {"success": False, "message": f"执行策略时发生意外错误: {e_execute}"}
         finally:
-            if active_captcha_handler and self.client and self.client.is_connected():
+            if active_captcha_handler and self.client:
                 try:
-                    self.client.remove_event_handler(active_captcha_handler, events.NewMessage)
-                    self.client.remove_event_handler(active_captcha_handler, events.MessageEdited)
+                    self.client.remove_event_handler(active_captcha_handler)
                     self.logger.info(f"用户 {self.nickname_for_logging}: MathCaptchaStrategy 事件处理器已移除。")
                 except Exception as e_remove:
                     self.logger.error(f"用户 {self.nickname_for_logging}: 移除 MathCaptchaStrategy 事件处理器失败: {e_remove}")
