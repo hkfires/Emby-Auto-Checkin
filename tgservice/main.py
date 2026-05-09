@@ -112,13 +112,17 @@ async def sign_in(request: SignInRequest):
     if not temp_client:
         raise HTTPException(status_code=400, detail="No active login process found for this phone number. Please request a code first.")
 
+    should_remove_temp_client = True
+
     try:
-        user = await temp_client.sign_in(
-            phone=request.phone,
-            code=request.code,
-            phone_code_hash=request.phone_code_hash,
-            password=request.password
-        )
+        if request.password:
+            user = await temp_client.sign_in(password=request.password)
+        else:
+            user = await temp_client.sign_in(
+                phone=request.phone,
+                code=request.code,
+                phone_code_hash=request.phone_code_hash
+            )
         
         if not user:
             raise HTTPException(status_code=401, detail="Failed to sign in, user object not returned.")
@@ -163,16 +167,23 @@ async def sign_in(request: SignInRequest):
             }
         }
     except errors.SessionPasswordNeededError:
+        should_remove_temp_client = False
         return {"success": False, "status": "2fa_needed", "message": "Two-factor authentication is required."}
     
     except errors.PhoneCodeInvalidError:
+        should_remove_temp_client = False
         raise HTTPException(status_code=400, detail="Invalid code.")
+
+    except errors.PasswordHashInvalidError:
+        should_remove_temp_client = False
+        raise HTTPException(status_code=400, detail="Invalid 2FA password.")
         
     except Exception as e:
         logger.error(f"登录 {request.phone} 时发生错误: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        await client_manager.remove_temp_login_client(request.phone)
+        if should_remove_temp_client:
+            await client_manager.remove_temp_login_client(request.phone)
 
 @app.post("/actions/execute", tags=["核心操作"])
 async def execute_action(request: ActionRequest):

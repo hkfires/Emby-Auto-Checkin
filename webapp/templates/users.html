@@ -102,6 +102,9 @@ $(document).ready(function() {
                 if (response.needs_otp) {
                     $('#otpPhoneDisplay').text(response.phone);
                     $('#otpPhoneHidden').val(response.phone);
+                    $('#otpCode').val('');
+                    $('#2faPassword').val('');
+                    $('#2fa-group').hide();
                     $('#otpModal').modal('show');
                 } else {
                      setTimeout(function() { location.reload(); }, 1000);
@@ -139,9 +142,20 @@ $(document).ready(function() {
             data: postData,
             dataType: 'json',
             success: function(response) {
-                showAlert(response.message, 'success');
-                $('#otpModal').modal('hide');
-                setTimeout(function() { location.reload(); }, 1000);
+                if (response.success) {
+                    showAlert(response.message, 'success');
+                    $('#otpModal').modal('hide');
+                    setTimeout(function() { location.reload(); }, 1000);
+                    return;
+                }
+
+                if (response.status === '2fa_needed') {
+                    $('#2fa-group').show();
+                    showAlert('需要两步验证密码，请输入。', 'warning', 'otpModal .modal-body');
+                    return;
+                }
+
+                showAlert(response.message || '验证失败。', 'danger', 'otpModal .modal-body');
             },
             error: function(xhr) {
                 let errorMsg = '验证失败。';
@@ -159,6 +173,12 @@ $(document).ready(function() {
                 $('#submitOtpBtn').prop('disabled', false).text('提交');
             }
         });
+    });
+
+    $('#otpModal').on('hidden.bs.modal', function() {
+        $('#otpCode').val('');
+        $('#2faPassword').val('');
+        $('#2fa-group').hide();
     });
 
     $('.delete-user-btn').on('click', function() {
