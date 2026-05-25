@@ -35,6 +35,17 @@ scheduler = BackgroundScheduler(
 
 logger = logging.getLogger(__name__)
 
+def _get_checkin_jobs():
+    return [job for job in scheduler.get_jobs() if job.id and job.id.startswith("checkin_job_")]
+
+def _remove_all_checkin_jobs(reason):
+    removed_count = 0
+    for job in _get_checkin_jobs():
+        scheduler.remove_job(job.id)
+        removed_count += 1
+        logger.info(f"{reason}: 已移除签到任务 {job.id}")
+    return removed_count
+
 def get_random_time_in_range(start_h, start_m, end_h, end_m, start_s=0, end_s=0):
     start_total_seconds = start_h * 3600 + start_m * 60 + start_s
     end_total_seconds = end_h * 3600 + end_m * 60 + end_s
@@ -133,11 +144,11 @@ def run_checkin_task_sync(user_telegram_id, target_type, target_identifier, task
     try:
         asyncio.run(run_checkin_task(user_telegram_id, target_type, target_identifier, task_config))
     except Exception as e:
-        logger.error(f"在同步包装器内执行任务 (User: {user_telegram_id}, Target: {target_identifier}) 时发生错误: {e}", exc_info=True)
+        logger.error(f"在同步包装器内执行任务 (User: {user_telegram_id}, Target: {target_identifier}) 时发生错误: {e}")
 
 def log_scheduled_jobs():
     logger.info("--- 当日任务计划总结 ---")
-    checkin_jobs = [job for job in scheduler.get_jobs() if job.id and job.id.startswith("checkin_job_")]
+    checkin_jobs = _get_checkin_jobs()
     
     if not checkin_jobs:
         logger.info("没有已安排的签到任务。")
@@ -150,40 +161,41 @@ def log_scheduled_jobs():
         logger.info(f"任务: {job.name} | 计划时间: {run_time_str}")
     logger.info("--------------------------")
 
+def _get_new_cron_trigger(task_entry, cfg):
+    scheduler_time_slots = cfg.get('scheduler_time_slots', [])
+    if not scheduler_time_slots:
+        logger.error("无法生成 CronTrigger，因为未配置任何时间段。")
+        return None
+
+    selected_slot_id = task_entry.get('selected_time_slot_id')
+    time_slot = None
+    if selected_slot_id:
+        time_slot = next((s for s in scheduler_time_slots if s.get('id') == selected_slot_id), None)
+
+    if not time_slot:
+        time_slot = random.choice(scheduler_time_slots)
+
+    if not time_slot:
+        job_identifier = task_entry.get('bot_username') or task_entry.get('target_chat_id')
+        logger.error(f"任务 {task_entry.get('user_telegram_id')}_{job_identifier} 无法找到有效的时间段。")
+        return None
+
+    start_h, start_m = time_slot.get('start_hour', 8), time_slot.get('start_minute', 0)
+    start_s = time_slot.get('start_second', 0)
+    end_h, end_m = time_slot.get('end_hour', 22), time_slot.get('end_minute', 0)
+    end_s = time_slot.get('end_second', 0)
+
+    rand_h, rand_m, rand_s = get_random_time_in_range(start_h, start_m, end_h, end_m, start_s, end_s)
+    return CronTrigger(hour=rand_h, minute=rand_m, second=rand_s)
+
 def reconcile_tasks(force_reschedule_ids: list = None):
     logger.info("开始核对任务...")
     config = load_config()
 
     if not config.get('scheduler_enabled'):
-        logger.info("调度器已禁用，跳过任务核对。")
+        removed_count = _remove_all_checkin_jobs("调度器已禁用")
+        logger.info(f"调度器已禁用，已清理 {removed_count} 个签到任务并跳过任务核对。")
         return {}
-
-    def _get_new_cron_trigger(task_entry, cfg):
-        scheduler_time_slots = cfg.get('scheduler_time_slots', [])
-        if not scheduler_time_slots:
-            logger.error("无法生成 CronTrigger，因为未配置任何时间段。")
-            return None
-
-        selected_slot_id = task_entry.get('selected_time_slot_id')
-        time_slot = None
-        if selected_slot_id:
-            time_slot = next((s for s in scheduler_time_slots if s.get('id') == selected_slot_id), None)
-
-        if not time_slot:
-            time_slot = random.choice(scheduler_time_slots)
-
-        if not time_slot:
-            job_identifier = task_entry.get('bot_username') or task_entry.get('target_chat_id')
-            logger.error(f"任务 {task_entry.get('user_telegram_id')}_{job_identifier} 无法找到有效的时间段。")
-            return None
-
-        start_h, start_m = time_slot.get('start_hour', 8), time_slot.get('start_minute', 0)
-        start_s = time_slot.get('start_second', 0)
-        end_h, end_m = time_slot.get('end_hour', 22), time_slot.get('end_minute', 0)
-        end_s = time_slot.get('end_second', 0)
-
-        rand_h, rand_m, rand_s = get_random_time_in_range(start_h, start_m, end_h, end_m, start_s, end_s)
-        return CronTrigger(hour=rand_h, minute=rand_m, second=rand_s)
 
     if force_reschedule_ids is not None:
         logger.info(f"强制重调度指定的任务: {force_reschedule_ids}")
@@ -235,7 +247,7 @@ def reconcile_tasks(force_reschedule_ids: list = None):
                         failed.append({"task_id": task_id, "error": "无法生成新的触发器"})
                         logger.error(f"为任务 {full_job_id} 生成新触发器失败。")
                 except Exception as e:
-                    logger.error(f"修改任务 {full_job_id} 时出错: {e}", exc_info=True)
+                    logger.error(f"修改任务 {full_job_id} 时出错: {e}")
                     failed.append({"task_id": task_id, "error": str(e)})
             else:
                 not_found.append(task_id)
@@ -318,17 +330,58 @@ def reconcile_tasks(force_reschedule_ids: list = None):
                     replace_existing=True
                 )
             except Exception as e:
-                logger.error(f"为新任务 {job_id} 添加调度时发生错误: {e}", exc_info=True)
+                logger.error(f"为新任务 {job_id} 添加调度时发生错误: {e}")
     return {}
 
 def daily_reschedule_tasks():
-    logger.info("开始每日重调度...")
+    logger.info("开始每日自适应重调度...")
+    config = load_config()
+    
+    if not config.get('scheduler_enabled'):
+        removed_count = _remove_all_checkin_jobs("调度器已禁用，跳过每日重调度")
+        logger.info(f"调度器已禁用，已清理 {removed_count} 个签到任务。")
+        return
+
+    logger.info("正在平滑更新现有定时任务的触发器...")
     for job in scheduler.get_jobs():
         if job.id and job.id.startswith("checkin_job_"):
-            scheduler.remove_job(job.id)
-    logger.info("已移除所有昨日的任务作业。")
+            try:
+                parts = job.id.split('_')
+                user_id = int(parts[2])
+                identifier_str = "_".join(parts[3:])
+
+                task_entry = None
+                for task in config.get('checkin_tasks', []):
+                    if task.get('user_telegram_id') != user_id:
+                        continue
+                    current_identifier = str(task.get('bot_username') or task.get('target_chat_id'))
+                    if current_identifier == identifier_str:
+                        task_entry = task
+                        break
+
+                if task_entry:
+                    new_trigger = _get_new_cron_trigger(task_entry, config)
+                    if new_trigger:
+                        target_type = 'bot' if task_entry.get('bot_username') else 'chat'
+                        target_identifier = task_entry.get('bot_username') or task_entry.get('target_chat_id')
+                        scheduler.modify_job(
+                            job.id,
+                            args=[user_id, target_type, target_identifier, task_entry]
+                        )
+                        scheduler.reschedule_job(job.id, trigger=new_trigger)
+                        logger.info(f"任务 {job.id} 触发器、下次执行时间和参数已平滑更新至最新配置。")
+                    else:
+                        logger.warning(f"无法为任务 {job.id} 生成新触发器，将此任务移除。")
+                        scheduler.remove_job(job.id)
+                else:
+                    logger.info(f"在配置中未找到任务 {job.id} 的实体，正在移除。")
+                    scheduler.remove_job(job.id)
+            except Exception as e:
+                logger.error(f"每日重调度转换任务 {job.id} 时出错: {e}")
+                scheduler.remove_job(job.id)
+
     reconcile_tasks()
-    logger.info("每日重调度完成。")
+    logger.info("每日自适应重调度完成。")
     log_scheduled_jobs()
 
 def run_scheduler():

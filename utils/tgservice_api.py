@@ -32,7 +32,7 @@ async def execute_action(session_name: str, target_entity_identifier: str, strat
         logger.error(f"调用 TG 服务时发生网络请求错误: {e}")
         return {"success": False, "message": f"无法连接到TG服务: {e}"}
     except Exception as e:
-        logger.error(f"调用 TG 服务时发生未知错误: {e}", exc_info=True)
+        logger.error(f"调用 TG 服务时发生未知错误: {e}")
         return {"success": False, "message": f"未知错误: {e}"}
 
 async def send_code(phone: str):
@@ -51,7 +51,7 @@ async def send_code(phone: str):
         logger.error(f"调用 TG 服务时发生网络请求错误: {e}")
         return {"success": False, "message": f"无法连接到TG服务: {e}"}
     except Exception as e:
-        logger.error(f"调用 TG 服务时发生未知错误: {e}", exc_info=True)
+        logger.error(f"调用 TG 服务时发生未知错误: {e}")
         return {"success": False, "message": f"未知错误: {e}"}
 
 async def sign_in(phone: str, code: str, phone_code_hash: str, password: str = None):
@@ -75,7 +75,7 @@ async def sign_in(phone: str, code: str, phone_code_hash: str, password: str = N
         logger.error(f"调用 TG 服务时发生网络请求错误: {e}")
         return {"success": False, "message": f"无法连接到TG服务: {e}"}
     except Exception as e:
-        logger.error(f"调用 TG 服务时发生未知错误: {e}", exc_info=True)
+        logger.error(f"调用 TG 服务时发生未知错误: {e}")
         return {"success": False, "message": f"未知错误: {e}"}
 
 async def manage_session(action: str, session_name: str, nickname: str):
@@ -98,7 +98,7 @@ async def manage_session(action: str, session_name: str, nickname: str):
         logger.error(f"调用 TG 服务时发生网络请求错误: {e}")
         return {"success": False, "message": f"无法连接到TG服务: {e}"}
     except Exception as e:
-        logger.error(f"调用 TG 服务时发生未知错误: {e}", exc_info=True)
+        logger.error(f"调用 TG 服务时发生未知错误: {e}")
         return {"success": False, "message": f"未知错误: {e}"}
 
 async def resolve_chat_identifier(session_name: str, entity_identifier: str):
@@ -120,5 +120,5 @@ async def resolve_chat_identifier(session_name: str, entity_identifier: str):
         logger.error(f"调用 TG 服务时发生网络请求错误: {e}")
         return {"success": False, "message": f"无法连接到TG服务: {e}"}
     except Exception as e:
-        logger.error(f"调用 TG 服务时发生未知错误: {e}", exc_info=True)
+        logger.error(f"调用 TG 服务时发生未知错误: {e}")
         return {"success": False, "message": f"未知错误: {e}"}

@@ -14,8 +14,9 @@ class CheckinStrategy:
 
     async def send_command(self, command_text):
         target_display_name = getattr(self.target_entity, 'username', getattr(self.target_entity, 'title', str(self.target_entity.id)))
-        await self.client.send_message(self.target_entity, command_text)
-        self.logger.info(f"用户 {self.nickname_for_logging}: 已发送命令 '{command_text}' 给 {target_display_name}")
+        sent_msg = await self.client.send_message(self.target_entity, command_text)
+        self.logger.info(f"用户 {self.nickname_for_logging}: 已发送命令 '{command_text}' 给 {target_display_name} (消息ID: {sent_msg.id})")
+        return sent_msg
 
     async def _parse_response_text(self, text_content):
         processed_text = text_content.strip()
@@ -63,7 +64,8 @@ class CheckinStrategy:
         return None
 
     async def _execute_initial_step(self, command_to_send, initial_button_keywords):
-        await self.send_command(command_to_send)
+        sent_msg = await self.send_command(command_to_send)
+        sent_msg_id = sent_msg.id if sent_msg else None
         
         lock = asyncio.Lock()
         action_taken_event = asyncio.Event()
@@ -75,6 +77,12 @@ class CheckinStrategy:
             
             if event.sender_id != self.target_entity.id:
                  return
+
+            if sent_msg_id and hasattr(event.message, 'reply_to') and event.message.reply_to:
+                reply_to_msg_id = event.message.reply_to.reply_to_msg_id
+                if reply_to_msg_id and reply_to_msg_id != sent_msg_id:
+                    self.logger.debug(f"用户 {self.nickname_for_logging}: 忽略不匹配该任务的聊天消息 (ReplyToId: {reply_to_msg_id} != 发送ID: {sent_msg_id})。")
+                    return
 
             async with lock:
                 if action_taken_event.is_set():
@@ -305,7 +313,7 @@ class MathCaptchaStrategy(CheckinStrategy):
             else:
                 self.logger.warning(f"用户 {self.nickname_for_logging}: 重新获取消息 ID {message_obj_from_event.id} 失败或返回空，将使用事件中的消息对象。")
         except Exception as e_refetch:
-            self.logger.error(f"用户 {self.nickname_for_logging}: 重新获取消息 ID {message_obj_from_event.id} 时出错: {e_refetch}", exc_info=True)
+            self.logger.error(f"用户 {self.nickname_for_logging}: 重新获取消息 ID {message_obj_from_event.id} 时出错: {e_refetch}")
 
         problem_text = message_to_use_for_buttons.raw_text
         answer = self._solve_math_problem(problem_text)

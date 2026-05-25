@@ -22,7 +22,7 @@ def trigger_reconciliation():
         log_scheduled_jobs()
         return jsonify({"success": True, "message": "任务重新调度成功。", "result": result}), 200
     except Exception as e:
-        logger.error(f"执行任务核对时发生错误: {e}", exc_info=True)
+        logger.error(f"执行任务核对时发生错误: {e}")
         return jsonify({"success": False, "message": f"内部错误: {e}"}), 500
 
 def start_scheduler_thread():

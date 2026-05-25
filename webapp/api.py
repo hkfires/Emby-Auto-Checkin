@@ -750,7 +750,7 @@ def run_async_tasks_in_background(app):
             loop.run_until_complete(execute_all_tasks_internal(source="background_thread"))
             logger.info("后台线程：所有任务执行完毕。")
         except Exception as e:
-            logger.error(f"后台线程执行任务时发生错误: {e}", exc_info=True)
+            logger.error(f"后台线程执行任务时发生错误: {e}")
         finally:
             loop.close()
 
