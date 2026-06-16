@@ -6,12 +6,12 @@
     <title>{% block title %}Emby签到助手{% endblock %}</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-multiselect/1.1.2/css/bootstrap-multiselect.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='toast.css') }}">
     <style>
         body { padding-top: 5rem; }
         .container { max-width: 1200px; }
         .nav-link { color: #007bff; }
         .nav-link.active { font-weight: bold; }
-        .alert { margin-top: 1rem; }
         .action-buttons button { margin-left: 5px; }
         #otpModal .modal-body input { margin-bottom: 10px; }
     </style>
@@ -69,20 +69,9 @@
         </div>
     </nav>
 
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
     <main role="main" class="container">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                        {{ message }}
-                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                            <span aria-hidden="true">&times;</span>
-                        </button>
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        <div id="global-message-area" style="margin-top: 1rem;"></div>
         {% block content %}{% endblock %}
     </main>
 
@@ -90,37 +79,12 @@
     <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-multiselect/1.1.2/js/bootstrap-multiselect.min.js"></script>
+    <script src="{{ url_for('static', filename='toast.js') }}"></script>
     <script>
-        function showAlert(message, type = 'info', areaId = 'global-message-area') {
-            const area = document.getElementById(areaId);
-            if (!area) return;
-            area.innerHTML = '';
-
-            const wrapper = document.createElement('div');
-            const alertDiv = document.createElement('div');
-            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-            alertDiv.setAttribute('role', 'alert');
-
-            const messageDiv = document.createElement('div');
-            messageDiv.textContent = message;
-
-            const closeButton = document.createElement('button');
-            closeButton.type = 'button';
-            closeButton.className = 'close';
-            closeButton.setAttribute('data-dismiss', 'alert');
-            closeButton.setAttribute('aria-label', 'Close');
-            closeButton.innerHTML = '<span aria-hidden="true">&times;</span>';
-
-            alertDiv.appendChild(messageDiv);
-            alertDiv.appendChild(closeButton);
-            wrapper.appendChild(alertDiv);
-
-            area.append(wrapper);
-
-            setTimeout(() => {
-                $(alertDiv).alert('close');
-            }, 5000);
-        }
+        const flashedMessages = {{ get_flashed_messages(with_categories=true) | tojson }};
+        flashedMessages.forEach(([category, message]) => {
+            showAlert(message, category);
+        });
     </script>
     {% block scripts %}{% endblock %}
 </body>

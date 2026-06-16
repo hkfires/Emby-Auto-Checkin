@@ -681,34 +681,37 @@ async def manual_action():
     
     target_config_item = None
     log_target_display_name = identifier
-    
-    task_for_manual_action = next((t for t in config.get('checkin_tasks', [])
-                                   if t.get('user_telegram_id') == user_telegram_id and
-                                      (str(t.get('bot_username')) == identifier or str(t.get('target_chat_id')) == identifier)),
-                                  None)
-
-    if not task_for_manual_action:
-        return jsonify({"success": False, "message": "在配置中未找到匹配的原始任务。"}), 404
+    target_chat_id_int = None
 
     if target_type == 'bot':
         target_config_item = next((b for b in config.get('bots', []) if isinstance(b, dict) and b.get('bot_username') == identifier), None)
-        if target_config_item and task_strategy_manual:
-            task_for_manual_action['strategy_identifier'] = task_strategy_manual
     elif target_type == 'chat':
         try:
-            chat_id_int = int(identifier)
-            target_config_item = next((c for c in config.get('chats', []) if isinstance(c, dict) and c.get('chat_id') == chat_id_int), None)
+            target_chat_id_int = int(identifier)
+            target_config_item = next((c for c in config.get('chats', []) if isinstance(c, dict) and c.get('chat_id') == target_chat_id_int), None)
             if target_config_item:
                 log_target_display_name = target_config_item.get('chat_title', identifier)
-                if message_content_manual is not None:
-                    task_for_manual_action['message_content'] = message_content_manual
-                if task_strategy_manual:
-                    task_for_manual_action['strategy_identifier'] = task_strategy_manual
         except ValueError:
-             return jsonify({"success": False, "message": "群组ID必须是数字。"}), 400
+            return jsonify({"success": False, "message": "群组ID必须是数字。"}), 400
+    else:
+        return jsonify({"success": False, "message": "无效的目标类型。"}), 400
     
     if not target_config_item:
         return jsonify({"success": False, "message": f"目标 '{identifier}' 未在配置中找到。"}), 400
+
+    task_for_manual_action = {
+        "user_telegram_id": user_telegram_id,
+        "selected_time_slot_id": None
+    }
+    if target_type == 'bot':
+        task_for_manual_action["bot_username"] = identifier
+    else:
+        task_for_manual_action["target_chat_id"] = target_chat_id_int
+
+    if target_type == 'chat' and message_content_manual is not None:
+        task_for_manual_action['message_content'] = message_content_manual
+    if task_strategy_manual:
+        task_for_manual_action['strategy_identifier'] = task_strategy_manual
 
     effective_strategy_id = task_for_manual_action.get('strategy_identifier') or \
                             target_config_item.get('strategy') or \

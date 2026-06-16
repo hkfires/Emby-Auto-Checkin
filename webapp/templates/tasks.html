@@ -159,7 +159,8 @@
                             <button class="btn btn-info btn-sm" onclick="manualActionFromData(this)"
                                 data-user-id="{{ task.user_telegram_id }}"
                                 data-target-type="{{ task.target_type }}"
-                                data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}">
+                                data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}"
+                                data-message="{{ task.message_content_display | default('', true) }}">
                                 手动执行
                             </button>
                             {% if task.target_type == 'chat' %}
@@ -426,7 +427,7 @@ function deleteSingleTask(buttonElement) {
 }
 
 function manualActionFromData(buttonElement) {
-    const { userId, targetType, identifier } = buttonElement.dataset;
+    const { userId, targetType, identifier, message } = buttonElement.dataset;
     const originalButtonText = buttonElement.innerHTML;
     buttonElement.innerHTML = '处理中...';
     buttonElement.disabled = true;
@@ -436,6 +437,9 @@ function manualActionFromData(buttonElement) {
         target_type: targetType,
         identifier: identifier
     });
+    if (targetType === 'chat') {
+        payload.append('message_content_manual', message || '');
+    }
 
     fetch("{{ url_for('api.manual_action') }}", {
         method: 'POST',
