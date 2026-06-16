@@ -11,6 +11,14 @@ class CheckinStrategy:
         self.nickname_for_logging = nickname_for_logging
         self.task_config = task_config if task_config else {}
         self.timeout_seconds = 10
+        try:
+            self.initial_button_click_delay = float(self.task_config.get("initial_button_click_delay", 1.5))
+        except (TypeError, ValueError):
+            self.initial_button_click_delay = 1.5
+        try:
+            self.follow_up_wait_seconds = float(self.task_config.get("follow_up_wait_seconds", 5))
+        except (TypeError, ValueError):
+            self.follow_up_wait_seconds = 5
 
     async def send_command(self, command_text):
         target_display_name = getattr(self.target_entity, 'username', getattr(self.target_entity, 'title', str(self.target_entity.id)))
@@ -27,12 +35,12 @@ class CheckinStrategy:
             return {"success": False, "message": processed_text + " (重复签到)"}
         if "请明天再来" in processed_text:
             return {"success": False, "message": processed_text + " (重复签到)"}
-        if "Done" in processed_text or "开始签到验证" in processed_text:
+        if "Done" in processed_text or "开始签到验证" in processed_text or "签到中" in processed_text:
             return {"success": False, "message": processed_text + " (待判断/验证流程)"}
 
         return {"success": False, "message": processed_text + " (未知情况/需策略特定解析)"}
 
-    async def _click_button_in_message(self, message_obj, keywords, is_answer_logic=False):
+    async def _click_button_in_message(self, message_obj, keywords, is_answer_logic=False, click_delay_seconds=0):
         if not message_obj or not hasattr(message_obj, 'buttons') or not message_obj.buttons:
             self.logger.warning(f"用户 {self.nickname_for_logging}: 消息 (ID: {message_obj.id if message_obj else 'N/A'}) 中没有按钮可供点击 (关键词: {keywords})。")
             return None
@@ -56,7 +64,10 @@ class CheckinStrategy:
                         if message_obj.chat_id != self.target_entity.id:
                             self.logger.warning(f"用户 {self.nickname_for_logging}: 按钮所在消息的chat_id ({message_obj.chat_id}) 与目标实体ID ({self.target_entity.id}) 不匹配。不点击。")
                             return None
-                        return await button.click()
+                        if click_delay_seconds:
+                            await asyncio.sleep(click_delay_seconds)
+                        click_result = await button.click()
+                        return click_result if click_result is not None else True
                     except Exception as e:
                         self.logger.error(f"用户 {self.nickname_for_logging}: 点击按钮 '{current_button_text}' (消息 ID {message_obj.id}) 失败: {e}")
                         return e
@@ -91,15 +102,33 @@ class CheckinStrategy:
 
                 self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 处理消息 ID {event.message.id if event.message else 'N/A'} (持有锁)，尝试寻找按钮 {initial_button_keywords}")
                 message_obj = event.message
-                click_obj = await self._click_button_in_message(message_obj, initial_button_keywords, is_answer_logic=False)
+                if message_obj and not getattr(message_obj, 'buttons', None):
+                    await asyncio.sleep(0.3)
+                    try:
+                        refetched_message = await self.client.get_messages(self.target_entity, ids=message_obj.id)
+                        if refetched_message and getattr(refetched_message, 'buttons', None):
+                            message_obj = refetched_message
+                            self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 重新获取消息 ID {message_obj.id} 后发现按钮。")
+                    except Exception as e_refetch:
+                        self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 重新获取消息按钮失败: {e_refetch}")
+
+                click_obj = await self._click_button_in_message(
+                    message_obj,
+                    initial_button_keywords,
+                    is_answer_logic=False,
+                    click_delay_seconds=self.initial_button_click_delay
+                )
                 
                 result_holder["value"] = (click_obj, message_obj, None)
-                action_taken_event.set() 
 
-                if click_obj and not isinstance(click_obj, Exception):
-                    self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 导致按钮点击。结果已记录，事件已设置。")
+                if click_obj is not None:
+                    action_taken_event.set()
+                    if not isinstance(click_obj, Exception):
+                        self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 导致按钮点击。结果已记录，事件已设置。")
+                    else:
+                        self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 点击按钮失败。结果已记录，事件已设置。")
                 else:
-                    self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 未导致按钮点击 (或点击失败)。结果已记录，事件已设置。")
+                    self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 消息 ID {event.message.id if event.message else 'N/A'} 未导致按钮点击，继续等待后续消息或编辑。")
         
         self.client.add_event_handler(temp_handler, events.NewMessage(chats=self.target_entity.id, from_users=self.target_entity.id))
         self.client.add_event_handler(temp_handler, events.MessageEdited(chats=self.target_entity.id, from_users=self.target_entity.id))
@@ -110,8 +139,13 @@ class CheckinStrategy:
         try:
             await asyncio.wait_for(action_taken_event.wait(), timeout=self.timeout_seconds)
         except asyncio.TimeoutError:
-            self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 等待初始响应超时。")
-            result_holder["value"] = (None, None, asyncio.TimeoutError("等待初始响应超时"))
+            current_click_obj, current_message_obj, _ = result_holder["value"]
+            if current_message_obj:
+                self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 已收到响应但等待可点击按钮超时，将返回最后一条响应供后续解析。")
+                result_holder["value"] = (current_click_obj, current_message_obj, None)
+            else:
+                self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 等待初始响应超时。")
+                result_holder["value"] = (None, None, asyncio.TimeoutError("等待初始响应超时"))
         finally:
             if self.client:
                 self.client.remove_event_handler(temp_handler)
@@ -149,8 +183,8 @@ class StartCommandButtonAlertStrategy(CheckinStrategy):
             return {"success": False, "message": "按钮已点击，等待后续聊天消息。"}, True
 
     async def _process_follow_up_message(self):
-        self.logger.info(f"用户 {self.nickname_for_logging}: 等待后续聊天消息 (默认2.5秒)。")
-        await asyncio.sleep(2.5) 
+        self.logger.info(f"用户 {self.nickname_for_logging}: 等待后续聊天消息 ({self.follow_up_wait_seconds}秒)。")
+        await asyncio.sleep(self.follow_up_wait_seconds) 
         messages_after_click = await self.client.get_messages(self.target_entity, limit=1)
         if messages_after_click:
             if messages_after_click[0].sender_id == self.target_entity.id or \
