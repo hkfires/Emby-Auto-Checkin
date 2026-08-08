@@ -69,7 +69,7 @@ $(document).ready(function() {
         }
 
         showAlert('正在获取模型列表...', 'info');
-        $('#test-result-area').html('');
+        $('#test-result-area').empty();
         btn.prop('disabled', true);
 
         $.ajax({
@@ -109,7 +109,9 @@ $(document).ready(function() {
         const resultArea = $('#test-result-area');
         const form = btn.closest('form');
 
-        resultArea.html('<p class="text-info">正在测试模型，请稍候...</p>');
+        resultArea.empty().append(
+            $('<p>', { class: 'text-info' }).text('正在测试模型，请稍候...')
+        );
         btn.prop('disabled', true);
 
         $.ajax({
@@ -123,22 +125,29 @@ $(document).ready(function() {
             dataType: 'json',
             success: function(response) {
                 const resultType = response.success ? 'success' : 'danger';
-                let resultMsg = `<strong>测试结果:</strong> ${response.message}`;
+                const resultMessage = response && response.message ? String(response.message) : '';
+                let resultMsg = `测试结果: ${resultMessage}`;
                 if (response.success) {
-                    resultMsg += '<br>设置已成功保存！';
+                    resultMsg += ' 设置已成功保存！';
                     showAlert('设置已成功保存！', 'success');
                 } else {
-                    resultMsg += '<br><strong>请注意：LLM API 设置未保存！</strong>';
+                    resultMsg += ' 请注意：LLM API 设置未保存！';
                     showAlert(`测试失败: ${response.message}`, 'danger');
                 }
-                resultArea.html(`<div class="alert alert-${resultType}">${resultMsg}</div>`);
+                resultArea.empty().append(
+                    $('<div>', { class: `alert alert-${resultType}` }).text(resultMsg)
+                );
             },
             error: function(xhr) {
                 let errorText = '测试请求失败，请检查网络或后台日志。';
                 if (xhr.responseJSON && xhr.responseJSON.message) {
-                    errorText = xhr.responseJSON.message;
+                    errorText = String(xhr.responseJSON.message);
                 }
-                resultArea.html(`<div class="alert alert-danger"><strong>测试失败:</strong> ${errorText}<br><strong>请注意：LLM API 设置未保存！</strong></div>`);
+                resultArea.empty().append(
+                    $('<div>', { class: 'alert alert-danger' }).text(
+                        `测试失败: ${errorText} 请注意：LLM API 设置未保存！`
+                    )
+                );
                 showAlert(`测试失败: ${errorText}`, 'danger');
             },
             complete: function() {

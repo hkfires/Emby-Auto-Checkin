@@ -1,7 +1,7 @@
 import logging, os, asyncio, httpx, base64, json, sqlite3, threading
 from openai import AsyncOpenAI
 from flask import Blueprint, request, jsonify, current_app, flash
-from flask_login import login_required
+from flask_login import current_user, login_required
 from utils.config import load_config, save_config
 from utils.log import (
     STALE_TASK_STATE_SECONDS,
@@ -25,6 +25,13 @@ api = Blueprint('api', __name__)
 logger = logging.getLogger(__name__)
 temp_otp_store = {}
 QUICK_QUEUE_HEARTBEAT_SECONDS = max(1, min(60, STALE_TASK_STATE_SECONDS // 3))
+
+
+@api.before_request
+def require_api_authentication():
+    """Keep every API endpoint private by default."""
+    if not current_user.is_authenticated:
+        return jsonify({"success": False, "message": "需要登录后才能执行此操作。"}), 401
 
 @api.route('/llm/test', methods=['POST'])
 @login_required
