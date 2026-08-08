@@ -1,9 +1,22 @@
-import logging, os, asyncio, httpx, base64, json, threading
+import logging, os, asyncio, httpx, base64, json, sqlite3, threading
 from openai import AsyncOpenAI
 from flask import Blueprint, request, jsonify, current_app, flash
 from flask_login import login_required
 from utils.config import load_config, save_config
-from utils.log import save_daily_checkin_log
+from utils.log import (
+    STALE_TASK_STATE_SECONDS,
+    beijing_today_str,
+    claim_daily_task,
+    complete_daily_task,
+    ensure_daily_task_rows,
+    get_daily_task_counts,
+    queue_daily_tasks,
+    refresh_queued_batch,
+    save_daily_checkin_log,
+    start_queued_task,
+    task_identity,
+    task_identity_from_config,
+)
 from utils.tgservice_api import execute_action, manage_session
 from utils.scheduler_api import notify_scheduler_to_reconcile
 from tgservice.checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
@@ -11,6 +24,7 @@ from tgservice.checkin_strategies import STRATEGY_MAPPING, get_strategy_display_
 api = Blueprint('api', __name__)
 logger = logging.getLogger(__name__)
 temp_otp_store = {}
+QUICK_QUEUE_HEARTBEAT_SECONDS = max(1, min(60, STALE_TASK_STATE_SECONDS // 3))
 
 @api.route('/llm/test', methods=['POST'])
 @login_required
@@ -725,127 +739,291 @@ async def manual_action():
         except ValueError:
             return jsonify({"success": False, "message": "群组ID必须是数字。"}), 400
 
-    result = await execute_action(
-        session_name=session_name_from_config,
-        target_entity_identifier=target_entity_identifier,
-        strategy_id=effective_strategy_id,
-        task_config=task_for_manual_action
+    identity = task_identity(user_telegram_id, target_type, identifier)
+    state_date = beijing_today_str()
+    configured_task = next(
+        (
+            task
+            for task in config.get("checkin_tasks", [])
+            if task_identity_from_config(task) == identity
+        ),
+        None,
     )
+    claim = {"claimed": False, "token": None, "reason": "not_configured"}
+    if configured_task is not None:
+        claim = claim_daily_task(identity, "manual", allow_retry=True, state_date=state_date)
+        if not claim["claimed"]:
+            if claim["reason"] == "in_progress":
+                return jsonify({"success": False, "message": "该任务正在排队或执行中，请稍后再试。"}), 409
+            return jsonify({"success": False, "message": "该任务今日状态暂时无法更新。"}), 503
+
+    try:
+        result = await execute_action(
+            session_name=session_name_from_config,
+            target_entity_identifier=target_entity_identifier,
+            strategy_id=effective_strategy_id,
+            task_config=task_for_manual_action,
+        )
+    except Exception as exc:
+        logger.exception(f"手动执行任务异常: {identity}")
+        result = {"success": False, "message": f"执行异常: {exc}"}
 
     log_entry = {
         "checkin_type": f"手动操作 ({strategy_display})",
-        "user_nickname": user_nickname, 
+        "user_nickname": user_nickname,
         "target_type": target_type,
         "target_name": log_target_display_name,
+        "target_identifier": identity[2] if identity else identifier,
+        "user_telegram_id": user_telegram_id,
+        "execution_source": "manual",
         "success": result.get("success"),
-        "message": result.get("message")
+        "message": result.get("message"),
     }
     save_daily_checkin_log(log_entry)
+    if claim["claimed"]:
+        complete_daily_task(
+            identity,
+            claim["token"],
+            result.get("success"),
+            result.get("message"),
+            state_date=state_date,
+        )
 
     return jsonify(result)
 
-def run_async_tasks_in_background(app):
+def _keep_queued_batch_alive(batch_id, state_date, stop_event):
+    while not stop_event.is_set():
+        refresh_queued_batch(batch_id, state_date)
+        if stop_event.wait(QUICK_QUEUE_HEARTBEAT_SECONDS):
+            break
+
+
+def run_async_tasks_in_background(app, task_entries=None, batch_id=None, state_date=None):
     with app.app_context():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        logger.info("后台线程：开始执行所有任务...")
+        heartbeat_stop = threading.Event()
+        heartbeat_thread = None
+        if batch_id:
+            heartbeat_thread = threading.Thread(
+                target=_keep_queued_batch_alive,
+                args=(batch_id, state_date, heartbeat_stop),
+                daemon=True,
+                name=f"quick-queue-heartbeat-{batch_id[:8]}",
+            )
+            heartbeat_thread.start()
+        logger.info("后台线程：开始执行今日未执行任务...")
         try:
-            loop.run_until_complete(execute_all_tasks_internal(source="background_thread"))
-            logger.info("后台线程：所有任务执行完毕。")
-        except Exception as e:
-            logger.error(f"后台线程执行任务时发生错误: {e}")
+            loop.run_until_complete(
+                execute_all_tasks_internal(
+                    source="background_thread",
+                    task_entries=task_entries,
+                    batch_id=batch_id,
+                    state_date=state_date,
+                )
+            )
+            logger.info("后台线程：今日未执行任务处理完毕。")
+        except Exception as exc:
+            logger.exception(f"后台线程执行任务时发生错误: {exc}")
         finally:
+            heartbeat_stop.set()
+            if heartbeat_thread:
+                heartbeat_thread.join(timeout=2)
             loop.close()
 
-async def execute_all_tasks_internal(source="http_manual_all"):
+
+async def execute_all_tasks_internal(
+    source="http_manual_all", task_entries=None, batch_id=None, state_date=None
+):
     config = load_config()
-    api_id = config.get('api_id')
-    api_hash = config.get('api_hash')
-
-    if not api_id or not api_hash:
-        message = "请先设置API ID和API Hash。"
-        if source.startswith("http"): return jsonify({"success": False, "message": message}), 400
-        else: logger.warning(f"内部调用所有任务失败: {message}"); return {"success": False, "message": message, "all_tasks_results": []}
-
-    tasks_to_run = config.get('checkin_tasks', [])
+    state_date = state_date or beijing_today_str()
+    tasks_to_run = task_entries if task_entries is not None else config.get("checkin_tasks", [])
     if not tasks_to_run:
-        message = "没有配置任务。"
-        if source.startswith("http"): return jsonify({"success": True, "message": message, "all_tasks_results": []}), 200
-        else: logger.info(f"内部调用所有任务: {message}"); return {"success": True, "message": message, "all_tasks_results": []}
+        return {"all_tasks_results": [], "message": "没有配置任务。"}
 
-
+    user_map_by_id = {
+        user["telegram_id"]: user
+        for user in config.get("users", [])
+        if "telegram_id" in user
+    }
+    bot_map_by_username = {
+        bot["bot_username"]: bot
+        for bot in config.get("bots", [])
+        if "bot_username" in bot
+    }
+    chat_map_by_id = {
+        chat["chat_id"]: chat
+        for chat in config.get("chats", [])
+        if "chat_id" in chat
+    }
     results_list = []
-    user_map_by_id = {user['telegram_id']: user for user in config.get('users', []) if 'telegram_id' in user}
-    bot_map_by_username = {bot['bot_username']: bot for bot in config.get('bots', []) if 'bot_username' in bot}
-    chat_map_by_id = {chat['chat_id']: chat for chat in config.get('chats', []) if 'chat_id' in chat}
 
     for task_config_entry in tasks_to_run:
-        user_telegram_id = task_config_entry.get('user_telegram_id')
-        user_config = user_map_by_id.get(user_telegram_id)
-        user_nickname = user_config.get('nickname', f"TGID_{user_telegram_id}") if user_config else f"TGID_{user_telegram_id}_(未知用户)"
+        identity = task_identity_from_config(task_config_entry)
+        if not identity:
+            continue
 
-        target_config_item = None
-        target_type = "未知目标"
-        log_target_name = "未知"
-
-        if task_config_entry.get('bot_username'):
-            target_config_item = bot_map_by_username.get(task_config_entry['bot_username'])
-            target_type = "bot"
-            log_target_name = task_config_entry['bot_username']
-        elif task_config_entry.get('target_chat_id'):
-            target_config_item = chat_map_by_id.get(task_config_entry['target_chat_id'])
-            target_type = "chat"
-            log_target_name = target_config_item.get('chat_title', str(task_config_entry['target_chat_id'])) if target_config_item else str(task_config_entry['target_chat_id'])
-        
-        eff_strat_id = "未知"
-        if target_config_item:
-            eff_strat_id = task_config_entry.get('strategy_identifier') or \
-                           target_config_item.get('strategy') or \
-                           target_config_item.get('strategy_identifier') or \
-                           "未知"
-        strategy_display = get_strategy_display_name(eff_strat_id)
-
-        if not user_config or user_config.get('status') != 'logged_in':
-            current_task_result = {"success": False, "message": f"用户 {user_nickname} 未登录或配置不正确。"}
-        elif not target_config_item:
-            current_task_result = {"success": False, "message": f"目标 {log_target_name} ({target_type}) 未在配置中找到。"}
+        if batch_id:
+            refresh_queued_batch(batch_id, state_date)
+            start_result = start_queued_task(identity, batch_id, state_date)
+            if not start_result["started"]:
+                continue
+            run_token = start_result["token"]
         else:
-            session_name_from_config = user_config.get('session_name')
-            if not session_name_from_config:
-                current_task_result = {"success": False, "message": f"用户 {user_nickname} 缺少 session_name 配置。"}
-            else:
-                target_entity_identifier = task_config_entry.get('bot_username') or task_config_entry.get('target_chat_id')
-                current_task_result = await execute_action(
-                    session_name=session_name_from_config,
-                    target_entity_identifier=target_entity_identifier,
-                    strategy_id=eff_strat_id,
-                    task_config=task_config_entry
-                )
+            claim = claim_daily_task(identity, "quick", allow_retry=False, state_date=state_date)
+            if not claim["claimed"]:
+                continue
+            run_token = claim["token"]
 
-        results_list.append({
-            "task": {"user_nickname": user_nickname, "target_type": target_type, "target_name": log_target_name, "strategy_used_display": strategy_display},
-            "result": current_task_result
-        })
-    
+        user_telegram_id, target_type, target_identifier = identity
+        user_config = user_map_by_id.get(user_telegram_id)
+        user_nickname = (
+            user_config.get("nickname", f"TGID_{user_telegram_id}")
+            if user_config
+            else f"TGID_{user_telegram_id}_(未知用户)"
+        )
+        target_config_item = None
+        log_target_name = target_identifier
+
+        if target_type == "bot":
+            target_config_item = bot_map_by_username.get(target_identifier)
+        elif target_type == "chat":
+            target_config_item = chat_map_by_id.get(int(target_identifier))
+            if target_config_item:
+                log_target_name = target_config_item.get("chat_title", target_identifier)
+
+        effective_strategy_id = "未知"
+        if target_config_item:
+            effective_strategy_id = (
+                task_config_entry.get("strategy_identifier")
+                or target_config_item.get("strategy")
+                or target_config_item.get("strategy_identifier")
+                or "未知"
+            )
+        strategy_display = get_strategy_display_name(effective_strategy_id)
+
+        try:
+            if not user_config or user_config.get("status") != "logged_in":
+                current_task_result = {
+                    "success": False,
+                    "message": f"用户 {user_nickname} 未登录或配置不正确。",
+                }
+            elif not target_config_item:
+                current_task_result = {
+                    "success": False,
+                    "message": f"目标 {log_target_name} ({target_type}) 未在配置中找到。",
+                }
+            elif not user_config.get("session_name"):
+                current_task_result = {
+                    "success": False,
+                    "message": f"用户 {user_nickname} 缺少 session_name 配置。",
+                }
+            elif not config.get("api_id") or not config.get("api_hash"):
+                current_task_result = {
+                    "success": False,
+                    "message": "API ID/Hash 未配置。",
+                }
+            else:
+                target_entity_identifier = (
+                    int(target_identifier) if target_type == "chat" else target_identifier
+                )
+                current_task_result = await execute_action(
+                    session_name=user_config.get("session_name"),
+                    target_entity_identifier=target_entity_identifier,
+                    strategy_id=effective_strategy_id,
+                    task_config=task_config_entry,
+                )
+        except Exception as exc:
+            logger.exception(f"批量执行任务异常: {identity}")
+            current_task_result = {"success": False, "message": f"执行异常: {exc}"}
+
+        results_list.append(
+            {
+                "task": {
+                    "user_nickname": user_nickname,
+                    "target_type": target_type,
+                    "target_name": log_target_name,
+                    "strategy_used_display": strategy_display,
+                },
+                "result": current_task_result,
+            }
+        )
         log_entry = {
-            "checkin_type": f"批量手动操作 ({strategy_display})",
+            "checkin_type": f"批量快速操作 ({strategy_display})",
             "user_nickname": user_nickname,
             "target_type": target_type,
             "target_name": log_target_name,
+            "user_telegram_id": user_telegram_id,
+            "target_identifier": target_identifier,
+            "execution_source": "quick",
             "success": current_task_result.get("success"),
-            "message": current_task_result.get("message")
+            "message": current_task_result.get("message"),
         }
         save_daily_checkin_log(log_entry)
-        
-    final_response = {"all_tasks_results": results_list, "message": "所有任务执行完毕。"}
-    if source.startswith("http"):
-        return jsonify(final_response)
-    else:
-        return final_response
+        complete_daily_task(
+            identity,
+            run_token,
+            current_task_result.get("success"),
+            current_task_result.get("message"),
+            state_date=state_date,
+        )
+
+    return {"all_tasks_results": results_list, "message": "所有任务执行完毕。"}
+
 
 @api.route('/tasks/execute_all', methods=['POST'])
 def execute_all_tasks_http():
-    thread = threading.Thread(target=run_async_tasks_in_background, args=(current_app._get_current_object(),))
-    thread.start()
-    flash("所有任务已在后台启动。请稍后在日志中查看结果。", "info")
-    return jsonify({"success": True})
+    config = load_config()
+    if not config.get("api_id") or not config.get("api_hash"):
+        return jsonify({"success": False, "message": "请先设置API ID和API Hash。"}), 400
+
+    tasks_to_queue = list(config.get("checkin_tasks", []))
+    if not tasks_to_queue:
+        return jsonify({
+            "success": True,
+            "queued_count": 0,
+            "skipped_count": 0,
+            "message": "没有配置任务。",
+        })
+
+    state_date = beijing_today_str()
+    ensure_daily_task_rows(config, state_date)
+    try:
+        batch_id, queued_count, skipped_count = queue_daily_tasks(
+            tasks_to_queue, state_date=state_date
+        )
+    except sqlite3.Error as exc:
+        logger.error(f"今日任务排队失败: {exc}")
+        return jsonify({
+            "success": False,
+            "queued_count": 0,
+            "skipped_count": 0,
+            "message": "任务状态数据库暂时不可用，请稍后重试。",
+        }), 503
+
+    if queued_count > 0:
+        thread = threading.Thread(
+            target=run_async_tasks_in_background,
+            args=(current_app._get_current_object(), tasks_to_queue, batch_id, state_date),
+            daemon=True,
+        )
+        thread.start()
+        message = f"已在后台排队执行 {queued_count} 个今日未执行任务。"
+    else:
+        today_task_summary = get_daily_task_counts(config, state_date)
+        if (
+            today_task_summary["total_count"] > 0
+            and today_task_summary["executed_count"] == today_task_summary["total_count"]
+        ):
+            message = "今日任务均已执行，无需重复执行。"
+        elif today_task_summary["queued_count"] or today_task_summary["running_count"]:
+            message = "今日任务已在排队或执行中，无需重复提交。"
+        else:
+            message = "今日没有可排队执行的任务。"
+    flash(message, "info")
+    return jsonify({
+        "success": True,
+        "queued_count": queued_count,
+        "skipped_count": skipped_count,
+        "message": message,
+    })

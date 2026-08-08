@@ -16,9 +16,25 @@
     <div class="col-md-6">
         <div class="card mb-4">
             <div class="card-body">
-                <h5 class="card-title">执行所有签到任务</h5>
-                <p class="card-text">点击下方按钮，为所有已配置的签到任务执行一次签到操作。</p>
-                <button id="checkinAllBtn" class="btn btn-success">立即执行所有任务</button>
+                <h5 class="card-title">执行今日未执行任务</h5>
+                <p class="card-text">
+                    今日任务总数 {{ today_task_summary.total_count }}，已执行 {{ today_task_summary.executed_count }}，
+                    待执行 {{ today_task_summary.pending_count }}。
+                </p>
+                <button id="checkinAllBtn" class="btn btn-success"
+                        {% if today_task_summary.pending_count == 0 %}disabled{% endif %}>
+                    {% if today_task_summary.pending_count > 0 %}
+                        立即执行未执行任务
+                    {% elif today_task_summary.total_count == 0 %}
+                        暂无任务
+                    {% elif today_task_summary.executed_count == today_task_summary.total_count %}
+                        今日任务均已执行
+                    {% elif today_task_summary.queued_count or today_task_summary.running_count %}
+                        今日任务正在执行
+                    {% else %}
+                        暂无可执行任务
+                    {% endif %}
+                </button>
             </div>
         </div>
     </div>
@@ -98,7 +114,7 @@ $(document).ready(function() {
     $('#log-date-picker').on('change', function() {
         const selectedDate = $(this).val();
         if (selectedDate) {
-            const today = new Date().toISOString().split('T')[0];
+            const today = '{{ today_date }}';
             if (selectedDate === today) {
                 window.location.href = '/';
             } else {
@@ -130,14 +146,14 @@ $(document).ready(function() {
                 window.location.reload();
             },
             error: function(xhr) {
-                let errorMsg = '执行所有签到任务失败。';
+                let errorMsg = '执行今日未执行任务失败。';
                 if (xhr.responseJSON && xhr.responseJSON.message) {
                     errorMsg = xhr.responseJSON.message;
                 }
                 showAlert(errorMsg, 'danger');
             },
             complete: function() {
-                $('#checkinAllBtn').prop('disabled', false).text('立即执行所有任务');
+                $('#checkinAllBtn').prop('disabled', false).text('立即执行未执行任务');
             }
         });
     });

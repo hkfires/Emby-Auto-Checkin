@@ -1,12 +1,18 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
 from flask_login import login_required, current_user
-from datetime import date, datetime
+from datetime import datetime
 from utils.config import load_config, save_config
-from utils.log import load_checkin_log_by_date
+from utils.log import (
+    beijing_today_str,
+    get_daily_task_counts,
+    get_daily_task_states,
+    load_checkin_log_by_date,
+    task_identity_from_config,
+)
 from utils.common import get_masked_api_credentials, get_processed_bots_list, update_api_credential
 from utils.tgservice_api import resolve_chat_identifier
 from tgservice.checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
-from utils.scheduler_api import notify_scheduler_to_reconcile
+from utils.scheduler_api import get_scheduler_task_schedules, notify_scheduler_to_reconcile
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,7 +39,8 @@ def check_first_run_status():
 @login_required
 def index():
     config = load_config()
-    selected_date_str = date.today().isoformat()
+    today_date_str = beijing_today_str()
+    selected_date_str = today_date_str
     display_date_label = "今日"
     
     requested_date_str = request.args.get('date')
@@ -47,12 +54,15 @@ def index():
             flash(f"提供的日期格式无效: {requested_date_str}。请使用 YYYY-MM-DD 格式。", "warning")
             
     checkin_log_for_display = load_checkin_log_by_date(selected_date_str)
+    today_task_summary = get_daily_task_counts(config, today_date_str)
         
     return render_template('index.html', 
                            config=config, 
                            checkin_log=checkin_log_for_display, 
                            selected_date=selected_date_str,
-                           display_date_label=display_date_label)
+                           display_date_label=display_date_label,
+                           today_date=today_date_str,
+                           today_task_summary=today_task_summary)
 
 @views.route('/settings/api', methods=['GET', 'POST'])
 @login_required
@@ -285,6 +295,18 @@ def delete_chat(chat_idx):
 @login_required
 def tasks_page():
     config = load_config()
+    today_date_str = beijing_today_str()
+    today_task_states = get_daily_task_states(config, today_date_str)
+    scheduler_schedule_result = get_scheduler_task_schedules(today_date_str)
+    scheduler_schedule_map = {
+        (
+            item.get("user_telegram_id"),
+            item.get("target_type"),
+            str(item.get("target_identifier")),
+        ): item
+        for item in scheduler_schedule_result.get("tasks", [])
+    }
+    today_task_summary = get_daily_task_counts(config, today_date_str)
 
     processed_bots_data = get_processed_bots_list(config.get('bots', []))
     configured_chats_data = config.get('chats', [])
@@ -309,7 +331,7 @@ def tasks_page():
             task_data['target_type'] = 'bot'
             task_data['target_name'] = task_data['bot_username']
             task_data['strategy_used'] = bot_strategy_map.get(task_data['bot_username'], 'start_button_alert')
-        elif task_data.get('target_chat_id'):
+        elif task_data.get('target_chat_id') is not None:
             task_data['target_type'] = 'chat'
             chat_info = next((c for c in configured_chats_data if c.get('chat_id') == task_data['target_chat_id']), None)
             task_data['target_name'] = chat_info.get('chat_title', str(task_data['target_chat_id'])) if chat_info else str(task_data['target_chat_id'])
@@ -325,10 +347,44 @@ def tasks_page():
         else:
             first_slot = next(iter(scheduler_time_slots_map.values()), None)
             if first_slot:
-                 task_data['selected_time_slot_name'] = f"默认为: {first_slot.get('name', f'时段ID: {first_slot.get_id}')} (原ID {selected_slot_id} 无效)"
+                 task_data['selected_time_slot_name'] = f"默认为: {first_slot.get('name', f'时段ID: {first_slot.get('id')}')} (原ID {selected_slot_id} 无效)"
                  task_data['selected_time_slot_id'] = first_slot.get('id')
             else:
                  task_data['selected_time_slot_name'] = "未分配或时段无效"
+
+        identity = task_identity_from_config(task_data)
+        task_state = today_task_states.get(identity, {}) if identity else {}
+        task_status = task_state.get("status", "pending")
+        if task_status == "queued":
+            task_data["today_status_display"] = "已排队"
+            task_data["today_status_class"] = "info"
+        elif task_status == "running":
+            task_data["today_status_display"] = "执行中"
+            task_data["today_status_class"] = "warning"
+        elif task_status == "completed":
+            task_data["today_status_display"] = (
+                "已执行（成功）" if task_state.get("success") else "已执行（失败）"
+            )
+            task_data["today_status_class"] = "success" if task_state.get("success") else "danger"
+        elif task_status == "interrupted":
+            task_data["today_status_display"] = "已执行（中断）"
+            task_data["today_status_class"] = "danger"
+        else:
+            task_data["today_status_display"] = "未执行"
+            task_data["today_status_class"] = "secondary"
+
+        if not scheduler_schedule_result.get("available"):
+            task_data["today_planned_time_display"] = "调度器不可用"
+            task_data["today_planned_time_class"] = "warning"
+        else:
+            schedule_item = scheduler_schedule_map.get(identity)
+            if schedule_item and schedule_item.get("planned_at"):
+                task_data["today_planned_at"] = schedule_item["planned_at"]
+                task_data["today_planned_time_display"] = schedule_item["planned_at"]
+                task_data["today_planned_time_class"] = "primary"
+            else:
+                task_data["today_planned_time_display"] = "未调度"
+                task_data["today_planned_time_class"] = "secondary"
 
         valid_tasks.append(task_data)
     
@@ -344,4 +400,7 @@ def tasks_page():
                            chats=configured_chats_data, 
                            strategy_display_names=all_strategy_display_names_for_tasks,
                            scheduler_time_slots=config.get('scheduler_time_slots', []),
-                           app_config=config)
+                           app_config=config,
+                           today_date=today_date_str,
+                           today_task_summary=today_task_summary,
+                           scheduler_available=scheduler_schedule_result.get("available", False))
