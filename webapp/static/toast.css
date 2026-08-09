@@ -1,0 +1,136 @@
+.toast-stack {
+    position: fixed;
+    top: calc(1rem + env(safe-area-inset-top));
+    right: 1rem;
+    z-index: 1080;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    width: min(360px, calc(100vw - 2rem));
+    pointer-events: none;
+}
+
+.app-toast {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 0.875rem 0.95rem;
+    color: #1f2933;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    border-left: 4px solid #2f80ed;
+    border-radius: 8px;
+    box-shadow: 0 14px 35px rgba(15, 23, 42, 0.18);
+    opacity: 0;
+    transform: translate3d(0, -10px, 0);
+    transition: opacity 180ms ease, transform 180ms ease;
+    pointer-events: auto;
+}
+
+.app-toast.is-visible {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+}
+
+.app-toast.is-hiding {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+}
+
+.app-toast__icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1;
+    color: #fff;
+    background: #2f80ed;
+}
+
+.app-toast__content {
+    min-width: 0;
+    padding-top: 0.05rem;
+}
+
+.app-toast__title {
+    margin-bottom: 0.15rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.app-toast__message {
+    font-size: 0.9rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.app-toast__close {
+    width: 1.75rem;
+    height: 1.75rem;
+    margin: -0.3rem -0.35rem 0 0;
+    padding: 0;
+    color: #64748b;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.app-toast__close:hover,
+.app-toast__close:focus {
+    color: #111827;
+    background: rgba(15, 23, 42, 0.06);
+    outline: none;
+}
+
+.app-toast--success {
+    border-left-color: #1f9d55;
+}
+
+.app-toast--success .app-toast__icon {
+    background: #1f9d55;
+}
+
+.app-toast--danger,
+.app-toast--error {
+    border-left-color: #dc3545;
+}
+
+.app-toast--danger .app-toast__icon,
+.app-toast--error .app-toast__icon {
+    background: #dc3545;
+}
+
+.app-toast--warning {
+    border-left-color: #f59f00;
+}
+
+.app-toast--warning .app-toast__icon {
+    background: #f59f00;
+}
+
+.app-toast--secondary {
+    border-left-color: #6c757d;
+}
+
+.app-toast--secondary .app-toast__icon {
+    background: #6c757d;
+}
+
+@media (max-width: 575.98px) {
+    .toast-stack {
+        top: calc(0.75rem + env(safe-area-inset-top));
+        right: 0.75rem;
+        left: 0.75rem;
+        width: auto;
+    }
+}

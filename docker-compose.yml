@@ -22,8 +22,6 @@ services:
     build: .
     image: emby-auto-checkin:latest
     container_name: emby-auto-checkin-scheduler
-    ports:
-      - "5057:5057"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -38,8 +36,6 @@ services:
     build: .
     image: emby-auto-checkin:latest
     container_name: emby-auto-checkin-tg-service
-    ports:
-      - "5056:5056"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

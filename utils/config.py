@@ -32,14 +32,18 @@ def _get_default_config():
     return cfg
 
 def load_config():
+    from filelock import FileLock
+    lock_file = CONFIG_FILE + ".lock"
     if not os.path.exists(CONFIG_FILE):
         default_config = _get_default_config()
         save_config(default_config)
         return default_config
     
+    lock = FileLock(lock_file, timeout=10)
     try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            config = json.load(f)
+        with lock:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return _get_default_config()
 
@@ -109,9 +113,13 @@ def load_config():
     return config
 
 def save_config(config_data):
+    from filelock import FileLock
+    lock_file = CONFIG_FILE + ".lock"
     os.makedirs(DATA_DIR, exist_ok=True)
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(config_data, f, indent=2, ensure_ascii=False)
+    lock = FileLock(lock_file, timeout=10)
+    with lock:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
 
 def migrate_session_names():
     config = load_config()

@@ -143,7 +143,7 @@ $(document).ready(function() {
         $('#checkinBotName').text('@' + botUsername);
         $('#manualCheckinBotHidden').val(botUsername);
         $('#manualCheckinModal').data('strategy', botStrategy);
-        $('#manual-checkin-result-area').html('');
+        $('#manual-checkin-result-area').empty();
         $('#manualCheckinModal').modal('show');
     });
 
@@ -159,7 +159,9 @@ $(document).ready(function() {
         }
         
         btn.prop('disabled', true).text('签到中...');
-        $('#manual-checkin-result-area').html('<p class="text-info">正在尝试签到...</p>');
+        $('#manual-checkin-result-area').empty().append(
+            $('<p>', { class: 'text-info' }).text('正在尝试签到...')
+        );
 
         $.ajax({
             url: "{{ url_for('api.manual_action') }}",
@@ -173,15 +175,19 @@ $(document).ready(function() {
             dataType: 'json',
             success: function(response) {
                 const resultType = response.success ? 'success' : 'danger';
-                const resultMsg = `<strong>结果:</strong> ${response.message}`;
-                $('#manual-checkin-result-area').html(`<div class="alert alert-${resultType}">${resultMsg}</div>`);
+                const resultMessage = response && response.message ? String(response.message) : '';
+                $('#manual-checkin-result-area').empty().append(
+                    $('<div>', { class: `alert alert-${resultType}` }).text(`结果: ${resultMessage}`)
+                );
             },
             error: function(xhr) {
                 let errorText = '手动签到请求失败。';
                  if (xhr.responseJSON && xhr.responseJSON.message) {
-                    errorText = xhr.responseJSON.message;
+                    errorText = String(xhr.responseJSON.message);
                 }
-                $('#manual-checkin-result-area').html(`<div class="alert alert-danger">${errorText}</div>`);
+                $('#manual-checkin-result-area').empty().append(
+                    $('<div>', { class: 'alert alert-danger' }).text(errorText)
+                );
             },
             complete: function() {
                 btn.prop('disabled', false).text('开始签到');

@@ -9,3 +9,4 @@ openai==1.102.0
 apscheduler==3.10.4
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
+filelock==3.29.0

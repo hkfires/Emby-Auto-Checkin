@@ -96,7 +96,7 @@ async def send_code(request: SendCodeRequest):
         sent_code = await temp_client.send_code_request(request.phone)
         return {"success": True, "phone_code_hash": sent_code.phone_code_hash}
     except Exception as e:
-        logger.error(f"发送验证码到 {request.phone} 时发生错误: {e}", exc_info=True)
+        logger.error(f"发送验证码到 {request.phone} 时发生错误: {e}")
         await client_manager.remove_temp_login_client(request.phone)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -132,25 +132,42 @@ async def sign_in(request: SignInRequest):
         
         await temp_client.disconnect()
         logger.info(f"临时客户端 ({temp_session_filename}) 已断开连接，准备迁移会话。")
+        await asyncio.sleep(1.0)
 
         temp_session_path = os.path.join(DATA_DIR, temp_session_filename)
         permanent_session_path = os.path.join(DATA_DIR, f"{session_name}.session")
 
         if os.path.exists(temp_session_path):
-            try:
-                with open(temp_session_path, 'rb') as f_temp:
-                    session_data = f_temp.read()
-                
-                with open(permanent_session_path, 'wb') as f_perm:
-                    f_perm.write(session_data)
-                
-                logger.info(f"会话文件内容已从 {temp_session_path} 成功复制到 {permanent_session_path}")
-                
-            except IOError as e:
-                logger.error(f"复制会话文件时发生IO错误: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail="Failed to migrate session file.")
-            finally:
-                os.remove(temp_session_path)
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    with open(temp_session_path, 'rb') as f_temp:
+                        session_data = f_temp.read()
+                    
+                    with open(permanent_session_path, 'wb') as f_perm:
+                        f_perm.write(session_data)
+                    
+                    logger.info(f"会话文件内容已从 {temp_session_path} 成功复制到 {permanent_session_path}")
+                    break
+                except IOError as e:
+                    if retry < max_retries - 1:
+                        logger.warning(f"复制会话文件时发生IO错误，正在进行第 {retry+1} 次重试... 错误: {e}")
+                        await asyncio.sleep(1.0)
+                    else:
+                        logger.error(f"复制会话文件时发生IO错误: {e}")
+                        raise HTTPException(status_code=500, detail="Failed to migrate session file.")
+            
+            for retry in range(max_retries):
+                try:
+                    if os.path.exists(temp_session_path):
+                        os.remove(temp_session_path)
+                    break
+                except OSError as e:
+                    if retry < max_retries - 1:
+                        logger.warning(f"删除临时文件发生错误，正在进行重试... 错误: {e}")
+                        await asyncio.sleep(1.0)
+                    else:
+                        logger.error(f"删除临时文件失败: {e}")
         else:
             logger.warning(f"未找到预期的临时会话文件: {temp_session_path}")
 
@@ -179,7 +196,7 @@ async def sign_in(request: SignInRequest):
         raise HTTPException(status_code=400, detail="Invalid 2FA password.")
         
     except Exception as e:
-        logger.error(f"登录 {request.phone} 时发生错误: {e}", exc_info=True)
+        logger.error(f"登录 {request.phone} 时发生错误: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if should_remove_temp_client:
@@ -220,7 +237,7 @@ async def execute_action(request: ActionRequest):
         logger.error(f"无法找到实体 {request.target_entity_identifier}: {ve}")
         raise HTTPException(status_code=404, detail=f"Could not find entity: {request.target_entity_identifier}")
     except Exception as e:
-        logger.error(f"执行动作时发生未知错误: {e}", exc_info=True)
+        logger.error(f"执行动作时发生未知错误: {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {type(e).__name__}")
 
 @app.post("/sessions/manage", tags=["会话管理"])

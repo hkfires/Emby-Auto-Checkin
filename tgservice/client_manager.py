@@ -87,7 +87,7 @@ class ClientManager:
                 logger.warning(f"用户 {nickname} (会话: {session_name}): 客户端连接后未授权，请刷新登录。")
         except Exception as e:
             self._clients[session_name] = {"client": None, "nickname": nickname, "status": "connect_failed"}
-            logger.error(f"用户 {nickname} (会话: {session_name}): 连接客户端时发生错误: {e}", exc_info=True)
+            logger.error(f"用户 {nickname} (会话: {session_name}): 连接客户端时发生错误: {e}")
 
     async def disconnect_all(self):
         logger.info("正在断开所有客户端连接...")

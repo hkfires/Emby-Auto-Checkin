@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='toast.css') }}">
     <style>
         body {
             display: flex;
@@ -29,15 +30,10 @@
     </style>
 </head>
 <body>
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
     <div class="login-form">
         <h2>登录 / 注册</h2>
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
         <form method="POST" action="{{ url_for('auth.login') }}">
             <div class="form-group">
                 <label for="username">用户名</label>
@@ -65,5 +61,12 @@
                 .catch(error => console.error('Error checking first run status:', error));
         </script>
     </div>
+    <script src="{{ url_for('static', filename='toast.js') }}"></script>
+    <script>
+        const flashedMessages = {{ get_flashed_messages(with_categories=true) | tojson }};
+        flashedMessages.forEach(([category, message]) => {
+            showAlert(message, category);
+        });
+    </script>
 </body>
 </html>
