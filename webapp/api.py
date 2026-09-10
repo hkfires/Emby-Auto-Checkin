@@ -20,6 +20,9 @@ from utils.log import (
 from utils.tgservice_api import execute_action, manage_session
 from utils.scheduler_api import notify_scheduler_to_reconcile
 from tgservice.checkin_strategies import STRATEGY_MAPPING, get_strategy_display_name
+from utils.notification import NotificationError, notify_checkin_failure, send_telegram_message
+from utils.log import record_notification_failure
+from utils.common import get_masked_token
 
 api = Blueprint('api', __name__)
 logger = logging.getLogger(__name__)
@@ -789,12 +792,25 @@ async def manual_action():
     save_daily_checkin_log(log_entry)
     if claim["claimed"]:
         complete_daily_task(
-            identity,
-            claim["token"],
-            result.get("success"),
-            result.get("message"),
-            state_date=state_date,
+            identity, claim["token"], result.get("success"),
+            result.get("message"), state_date=state_date,
         )
+    if not result.get("success"):
+        try:
+            await notify_checkin_failure(
+                user_nickname=user_nickname,
+                user_telegram_id=user_telegram_id,
+                target_name=log_target_display_name,
+                target_type=target_type,
+                strategy_display=strategy_display,
+                message=result.get("message", "未知错误"),
+                execution_source="manual",
+                config=config,
+            )
+        except NotificationError as exc:
+            # Delivery failure is recorded independently of the completed task.
+            record_notification_failure(identity, "manual", exc.code)
+            result["notification_error"] = exc.code
 
     return jsonify(result)
 
@@ -968,12 +984,25 @@ async def execute_all_tasks_internal(
         }
         save_daily_checkin_log(log_entry)
         complete_daily_task(
-            identity,
-            run_token,
-            current_task_result.get("success"),
-            current_task_result.get("message"),
-            state_date=state_date,
+            identity, run_token, current_task_result.get("success"),
+            current_task_result.get("message"), state_date=state_date,
         )
+        if not current_task_result.get("success"):
+            try:
+                await notify_checkin_failure(
+                    user_nickname=user_nickname,
+                    user_telegram_id=user_telegram_id,
+                    target_name=log_target_name,
+                    target_type=target_type,
+                    strategy_display=strategy_display,
+                    message=current_task_result.get("message", "未知错误"),
+                    execution_source="quick",
+                    config=config,
+                )
+            except NotificationError as exc:
+                # Continue the batch only after durably recording delivery failure.
+                record_notification_failure(identity, "quick", exc.code)
+                current_task_result["notification_error"] = exc.code
 
     return {"all_tasks_results": results_list, "message": "所有任务执行完毕。"}
 
@@ -1034,3 +1063,47 @@ def execute_all_tasks_http():
         "skipped_count": skipped_count,
         "message": message,
     })
+
+
+@api.route('/notification/test', methods=['POST'])
+@login_required
+async def test_notification():
+    config = load_config()
+    saved_settings = config.get('notification_settings', {})
+
+    submitted_token = request.form.get('bot_token', '').strip()
+    submitted_chat_id = request.form.get('chat_id', '').strip()
+    submitted_api_base_url = request.form.get('api_base_url', '').strip()
+
+    original_token = saved_settings.get('bot_token', '')
+    masked_token = get_masked_token(original_token)
+
+    if submitted_token and submitted_token != masked_token:
+        bot_token = submitted_token
+    else:
+        bot_token = original_token
+
+    chat_id = submitted_chat_id or saved_settings.get('chat_id', '')
+    api_base_url = submitted_api_base_url or saved_settings.get('api_base_url', '') or 'https://api.telegram.org'
+
+    if not bot_token:
+        return jsonify({"success": False, "message": "Bot Token 不能为空。"}), 400
+    if not chat_id:
+        return jsonify({"success": False, "message": "Chat ID 不能为空。"}), 400
+
+    test_text = (
+        "🔔 <b>Emby 签到助手 - 测试通知</b>\n\n"
+        "恭喜！当您看到这条消息时，说明 Telegram Bot 通知已经配置成功。\n"
+        "当签到任务失败时，系统将通过此机器人向您发送通知。"
+    )
+
+    try:
+        await send_telegram_message(
+            bot_token=bot_token, chat_id=chat_id, text=test_text,
+            api_base_url=api_base_url,
+        )
+    except NotificationError as exc:
+        # HTTP boundary returns only stable, credential-free error details.
+        status = 400 if exc.code in {"configuration_error", "destination_blocked"} else 502
+        return jsonify({"success": False, "error_code": exc.code, "message": str(exc)}), status
+    return jsonify({"success": True, "message": "测试通知发送成功！请在 Telegram 中查收。"})

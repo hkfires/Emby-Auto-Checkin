@@ -9,7 +9,7 @@ from utils.log import (
     load_checkin_log_by_date,
     task_identity_from_config,
 )
-from utils.common import get_masked_api_credentials, get_processed_bots_list, update_api_credential
+from utils.common import get_masked_api_credentials, get_masked_token, get_processed_bots_list, update_api_credential
 from utils.tgservice_api import resolve_chat_identifier
 from tgservice.checkin_strategies import STRATEGY_DISPLAY_NAMES, get_strategy_display_name
 from utils.scheduler_api import get_scheduler_task_schedules, notify_scheduler_to_reconcile
@@ -179,6 +179,46 @@ def scheduler_settings_page():
 def llm_settings_page():
    config = load_config()
    return render_template('llm_settings.html', llm_settings=config.get('llm_settings', {}))
+
+@views.route('/settings/notification', methods=['GET', 'POST'])
+@login_required
+def notification_settings_page():
+    config = load_config()
+    notification_settings = config.get('notification_settings', {})
+    original_token = notification_settings.get('bot_token', '')
+
+    if request.method == 'POST':
+        enabled = request.form.get('enabled') == 'on'
+        submitted_token = request.form.get('bot_token', '').strip()
+        chat_id = request.form.get('chat_id', '').strip()
+        api_base_url = request.form.get('api_base_url', '').strip() or 'https://api.telegram.org'
+
+        current_masked = get_masked_token(original_token)
+        if submitted_token and submitted_token != current_masked:
+            bot_token = submitted_token
+        elif submitted_token == current_masked:
+            bot_token = original_token
+        else:
+            bot_token = ""
+
+        notification_settings['enabled'] = enabled
+        notification_settings['bot_token'] = bot_token
+        notification_settings['chat_id'] = chat_id
+        notification_settings['api_base_url'] = api_base_url
+        config['notification_settings'] = notification_settings
+        save_config(config)
+        flash("通知设置已成功保存。", "success")
+        config = load_config()
+        notification_settings = config.get('notification_settings', {})
+        original_token = notification_settings.get('bot_token', '')
+
+    masked_token = get_masked_token(original_token)
+    return render_template(
+        'notification_settings.html',
+        notification_settings=notification_settings,
+        masked_token=masked_token,
+        original_token=original_token,
+    )
 
 @views.route('/users', methods=['GET'])
 @login_required

@@ -76,6 +76,21 @@ bash <(curl -fsSL https://get.docker.com)
 
 应用程序的所有持久化数据（包括主配置文件 `config_data.json`、日志数据库以及所有用户的 Telegram 会话文件 `.session`）都存储在项目根目录的 `data/` 文件夹中。
 
+## 签到失败通知
+
+在 Web「通知设置」中填写 Bot Token 和 Chat ID，启用并发送测试通知。私聊接收者需先向机器人发送 `/start`。
+
+默认仅允许 `https://api.telegram.org`。自定义反代必须由服务器管理员在 **webapp 和 scheduler 两个服务**的环境变量中加入白名单，例如：
+
+```yaml
+environment:
+  - NOTIFICATION_TRUSTED_ORIGINS=https://tg-proxy.example.com
+```
+
+多个基础地址用逗号分隔，仅支持 HTTPS origin（可含端口，不含路径、查询参数或凭据）。即使在白名单内，也禁止连接私网、回环、链路本地等非公网地址。请求使用经过检查的固定 IP，保留原域名进行 TLS 验证，不跟随重定向、不使用 HTTP(S)_PROXY 环境变量。请只信任能够接收 Bot Token 的反代。
+
+通知失败不修改已完成的签到结果；任务返回独立的 `notification_error` 错误码，并在 `data/checkin_log.db` 的 `notification_failures` 表和 ERROR 日志中记录任务标识、来源及错误码。测试通知 API 以 HTTP 400（配置/目标被禁止）或 502（网络、协议或 API 拒绝）明确报告失败。无效 JSON 属于 `protocol_error`，不会当作普通 API 拒绝处理。
+
 ## 日常维护
 
 ### 停止容器

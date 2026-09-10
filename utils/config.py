@@ -17,6 +17,12 @@ def _get_default_config():
         "scheduler_enabled": False,
         "scheduler_time_slots": [_get_default_time_slot()],
         "web_users": [],
+        "notification_settings": {
+            "enabled": False,
+            "bot_token": "",
+            "chat_id": "",
+            "api_base_url": "https://api.telegram.org"
+        },
         "llm_settings": {
             "api_url": "",
             "api_key": "",
@@ -55,6 +61,15 @@ def load_config():
     config.setdefault("checkin_tasks", [])
     config.setdefault("scheduler_enabled", False)
     config.setdefault("web_users", [])
+    notification_settings = config.setdefault("notification_settings", {})
+    if not isinstance(notification_settings, dict):
+        notification_settings = {}
+        config["notification_settings"] = notification_settings
+    notification_settings.setdefault("enabled", False)
+    notification_settings.setdefault("bot_token", "")
+    notification_settings.setdefault("chat_id", "")
+    notification_settings.setdefault("api_base_url", "https://api.telegram.org")
+
     config.setdefault("llm_settings", {
         "api_url": "",
         "api_key": "",

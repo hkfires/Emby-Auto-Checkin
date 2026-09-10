@@ -24,6 +24,30 @@ _db_initialized = False
 _state_lock = threading.RLock()
 
 
+def record_notification_failure(identity, source, code):
+    """Persist delivery failures separately without changing check-in history/state."""
+    with _connect() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notification_failures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                user_telegram_id INTEGER,
+                target_type TEXT,
+                target_identifier TEXT,
+                source TEXT NOT NULL,
+                error_code TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "INSERT INTO notification_failures "
+            "(timestamp, user_telegram_id, target_type, target_identifier, source, error_code) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (beijing_now().isoformat(), *identity, source, code),
+        )
+        conn.commit()
+    logger.error("签到通知发送失败: task=%s source=%s code=%s", identity, source, code)
+
+
 def beijing_now():
     return datetime.now(BEIJING_TZ)
 

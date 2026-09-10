@@ -24,6 +24,16 @@ def get_masked_api_credentials(config_data):
         api_hash_display = api_hash[:3] + '****' + api_hash[-3:] if len(api_hash) > 6 else '******'
     return api_id_display, api_hash_display
 
+def get_masked_token(token):
+    if not token or not isinstance(token, str):
+        return None
+    token = token.strip()
+    if not token:
+        return None
+    if len(token) > 10:
+        return token[:6] + '****' + token[-4:]
+    return '******'
+
 def get_processed_bots_list(raw_bots_list):
     processed_bots = []
     if not isinstance(raw_bots_list, list):

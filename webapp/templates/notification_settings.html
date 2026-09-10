@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}通知设置 - Emby签到助手{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Telegram Bot 通知设置</h2>
+    <p class="text-muted">配置后，当签到任务执行失败时，系统将通过 Telegram Bot 向您发送通知提醒。</p>
+
+    <div class="alert alert-info" role="alert">
+        <h5 class="alert-heading">使用提示</h5>
+        <ul class="mb-0">
+            <li><strong>创建机器人</strong>：在 Telegram 中联系 <a href="https://t.me/BotFather" target="_blank">@BotFather</a>，发送 <code>/newbot</code> 按照指引创建通知机器人，获取 <strong>Bot Token</strong>。</li>
+            <li><strong>获取 Chat ID</strong>：
+                <ul>
+                    <li>个人私聊通知：先在 Telegram 中找到您的机器人点击 <strong>Start</strong>，然后可通过 <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> 获取您自己的用户 ID。</li>
+                    <li>群组通知：将机器人拉入目标群组，Chat ID 通常为负数（例如 <code>-1001234567890</code>）。</li>
+                </ul>
+            </li>
+            <li><strong>API 基础地址</strong>：默认为 <code>https://api.telegram.org</code>。如需反代，管理员须先在 webapp 和 scheduler 服务的 NOTIFICATION_TRUSTED_ORIGINS 环境变量中允许该 HTTPS 基础地址；仅允许公网目标。</li>
+        </ul>
+    </div>
+
+    <form method="POST" action="{{ url_for('views.notification_settings_page') }}" id="notification-settings-form">
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="form-group form-check">
+                    <input type="checkbox" class="form-check-input" id="enabled" name="enabled" {% if notification_settings.enabled %}checked{% endif %}>
+                    <label class="form-check-label font-weight-bold" for="enabled">启用签到失败通知</label>
+                    <small class="form-text text-muted">开启后，当定时计划任务、批量执行或手动执行签到失败时，将自动向指定的 Telegram 账号或群组推送失败告警。</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="bot_token" class="font-weight-bold">Bot Token</label>
+                    <input type="text" class="form-control" id="bot_token" name="bot_token"
+                           value="{{ masked_token if masked_token else '' }}"
+                           placeholder="{{ '已设置，如需修改请输入新 Token' if original_token else '例如: 123456789:ABCdefGHIjklMNOpqrs' }}">
+                    <small class="form-text text-muted">由 @BotFather 提供的 HTTP API Token。</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="chat_id" class="font-weight-bold">接收通知的 Chat ID</label>
+                    <input type="text" class="form-control" id="chat_id" name="chat_id"
+                           value="{{ notification_settings.chat_id or '' }}"
+                           placeholder="例如: 123456789 或 -100123456789">
+                    <small class="form-text text-muted">接收通知消息的个人 Telegram ID 或群组 ID。</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="api_base_url" class="font-weight-bold">Telegram API 基础地址</label>
+                    <input type="url" class="form-control" id="api_base_url" name="api_base_url"
+                           value="{{ notification_settings.api_base_url or 'https://api.telegram.org' }}"
+                           placeholder="https://api.telegram.org">
+                    <small class="form-text text-muted">默认为 <code>https://api.telegram.org</code>，反代须在服务器端白名单内，仅支持无路径的 HTTPS 基础地址，不支持私网地址、重定向或环境代理。</small>
+                </div>
+
+                <div class="d-flex align-items-center">
+                    <button type="submit" class="btn btn-primary mr-3">保存设置</button>
+                    <button type="button" class="btn btn-outline-info" id="test-notification-btn">发送测试通知</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <div id="test-result-area"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#test-notification-btn').on('click', function() {
+        const btn = $(this);
+        const botToken = $('#bot_token').val().trim();
+        const chatId = $('#chat_id').val().trim();
+        const apiBaseUrl = $('#api_base_url').val().trim();
+        const resultArea = $('#test-result-area');
+
+        resultArea.empty();
+        btn.prop('disabled', true).text('正在发送测试通知...');
+        showAlert('正在尝试发送测试通知...', 'info');
+
+        function showTestResult(isSuccess, message) {
+            const alertClass = isSuccess ? 'alert-success' : 'alert-danger';
+            const titleText = isSuccess ? '测试成功！ ' : '测试失败： ';
+
+            const $alert = $('<div>')
+                .addClass('alert ' + alertClass + ' alert-dismissible fade show')
+                .attr('role', 'alert');
+            const $strong = $('<strong>').text(titleText);
+            const $msgSpan = $('<span>').text(message);
+            const $closeBtn = $('<button type="button" class="close" data-dismiss="alert" aria-label="Close">')
+                .append($('<span aria-hidden="true">&times;</span>'));
+
+            $alert.append($strong).append($msgSpan).append($closeBtn);
+            resultArea.empty().append($alert);
+        }
+
+        $.ajax({
+            url: "{{ url_for('api.test_notification') }}",
+            type: 'POST',
+            data: {
+                bot_token: botToken,
+                chat_id: chatId,
+                api_base_url: apiBaseUrl
+            },
+            dataType: 'json',
+            success: function(response) {
+                if (response.success) {
+                    showAlert(response.message, 'success');
+                    showTestResult(true, response.message);
+                } else {
+                    showAlert('测试失败: ' + response.message, 'danger');
+                    showTestResult(false, response.message);
+                }
+            },
+            error: function(xhr) {
+                let errorMsg = '请求失败，请检查网络或后台服务。';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    errorMsg = xhr.responseJSON.message;
+                }
+                showAlert('测试失败: ' + errorMsg, 'danger');
+                showTestResult(false, errorMsg);
+            },
+            complete: function() {
+                btn.prop('disabled', false).text('发送测试通知');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -37,6 +37,9 @@
                     <a class="nav-link {% if request.endpoint == 'views.scheduler_settings_page' %}active{% endif %}" href="{{ url_for('views.scheduler_settings_page') }}">自动签到设置</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint == 'views.notification_settings_page' %}active{% endif %}" href="{{ url_for('views.notification_settings_page') }}">通知设置</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link {% if request.endpoint == 'views.users_page' %}active{% endif %}" href="{{ url_for('views.users_page') }}">用户管理</a>
                 </li>
                 <li class="nav-item">

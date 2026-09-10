@@ -16,6 +16,8 @@ from apscheduler.events import (
 from utils.tgservice_api import execute_action
 from tgservice.checkin_strategies import get_strategy_display_name
 from utils.config import load_config
+from utils.notification import NotificationError, notify_checkin_failure
+from utils.log import record_notification_failure
 from utils.log import (
     BEIJING_TZ,
     beijing_today_str,
@@ -231,16 +233,31 @@ async def run_checkin_task(user_telegram_id, target_type, target_identifier, tas
         result.get("message"),
         state_date=state_date,
     )
+    if not result.get("success"):
+        try:
+            await notify_checkin_failure(
+                user_nickname=user_nickname,
+                user_telegram_id=identity[0] if identity else user_telegram_id,
+                target_name=log_target_display_name,
+                target_type=identity[1] if identity else target_type,
+                strategy_display=strategy_display,
+                message=result.get("message", "未知错误"),
+                execution_source="scheduled",
+                config=config,
+            )
+        except NotificationError as exc:
+            # Delivery is a separate boundary: preserve the completed check-in.
+            record_notification_failure(identity, "scheduled", exc.code)
+            result["notification_error"] = exc.code
     logger.info(
         f"计划任务: User: {user_nickname}, Target: {log_target_display_name} "
         f"执行完毕. Result: {result.get('success')}"
     )
+    return result
 
 def run_checkin_task_sync(user_telegram_id, target_type, target_identifier, task_config):
-    try:
-        asyncio.run(run_checkin_task(user_telegram_id, target_type, target_identifier, task_config))
-    except Exception as e:
-        logger.error(f"在同步包装器内执行任务 (User: {user_telegram_id}, Target: {target_identifier}) 时发生错误: {e}")
+    # Unexpected errors must reach APScheduler instead of appearing as successful jobs.
+    return asyncio.run(run_checkin_task(user_telegram_id, target_type, target_identifier, task_config))
 
 def log_scheduled_jobs():
     logger.info("--- 当日任务计划总结 ---")
