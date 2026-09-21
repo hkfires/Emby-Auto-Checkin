@@ -1,16 +1,30 @@
 import asyncio, re, base64, httpx, io, json
+import math
 from openai import AsyncOpenAI
 from telethon import events, errors
 from utils.config import load_config
 
+class StrategyConfigurationError(ValueError):
+    """Invalid task configuration, distinct from Telegram entity lookup errors."""
+
+
 class CheckinStrategy:
+    DEFAULT_TIMEOUT_SECONDS = 15
+    BUTTON_CLICK_TIMEOUT_SECONDS = 15
+
     def __init__(self, client, target_entity, logger, nickname_for_logging, task_config=None):
         self.client = client
         self.target_entity = target_entity
         self.logger = logger
         self.nickname_for_logging = nickname_for_logging
         self.task_config = task_config if task_config else {}
-        self.timeout_seconds = 10
+        timeout = self.task_config.get("timeout", self.DEFAULT_TIMEOUT_SECONDS)
+        try:
+            self.timeout_seconds = float(timeout)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise StrategyConfigurationError("任务配置 timeout 必须为有限的正数（秒）。") from exc
+        if isinstance(timeout, bool) or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise StrategyConfigurationError("任务配置 timeout 必须为有限的正数（秒）。")
         try:
             self.initial_button_click_delay = float(self.task_config.get("initial_button_click_delay", 1.5))
         except (TypeError, ValueError):
@@ -75,23 +89,49 @@ class CheckinStrategy:
         return None
 
     async def _execute_initial_step(self, command_to_send, initial_button_keywords):
-        sent_msg = await self.send_command(command_to_send)
-        sent_msg_id = sent_msg.id if sent_msg else None
-        
         lock = asyncio.Lock()
         action_taken_event = asyncio.Event()
-        result_holder = {"value": (None, None, None)}
+        result_holder = {"value": (None, None, None), "received_message": None}
+        sent_msg_holder = {"id": None, "date": None}
+
+        pending_events = asyncio.Queue()
+        accepting_events = True
 
         async def temp_handler(event):
+            # Only the main coroutine owns processing and button clicks.
+            if accepting_events:
+                pending_events.put_nowait(event)
+
+        async def process_event(event):
             if event.chat_id != self.target_entity.id:
                 return
             
             if event.sender_id != self.target_entity.id:
-                 return
+                return
 
-            if sent_msg_id and hasattr(event.message, 'reply_to') and event.message.reply_to:
+            sent_msg_id = sent_msg_holder["id"]
+            # Telegram timestamps have second precision: equal or missing times
+            # cannot prove an old menu was edited after this command.
+            is_reused_private_menu = (
+                isinstance(event, events.MessageEdited.Event)
+                and event.is_private
+                and event.message.id < sent_msg_id
+                and sent_msg_holder["date"] is not None
+                and getattr(event.message, 'edit_date', None) is not None
+                and event.message.edit_date > sent_msg_holder["date"]
+                and any(
+                    keyword in (getattr(button, 'text', None) or '')
+                    for row in (getattr(event.message, 'buttons', None) or [])
+                    for button in row
+                    for keyword in initial_button_keywords
+                )
+            )
+            if event.message.id <= sent_msg_id and not is_reused_private_menu:
+                return
+
+            if getattr(event.message, 'reply_to', None):
                 reply_to_msg_id = event.message.reply_to.reply_to_msg_id
-                if reply_to_msg_id and reply_to_msg_id != sent_msg_id:
+                if reply_to_msg_id not in (None, sent_msg_id) and not is_reused_private_menu:
                     self.logger.debug(f"用户 {self.nickname_for_logging}: 忽略不匹配该任务的聊天消息 (ReplyToId: {reply_to_msg_id} != 发送ID: {sent_msg_id})。")
                     return
 
@@ -102,22 +142,40 @@ class CheckinStrategy:
 
                 self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 处理消息 ID {event.message.id if event.message else 'N/A'} (持有锁)，尝试寻找按钮 {initial_button_keywords}")
                 message_obj = event.message
-                if message_obj and not getattr(message_obj, 'buttons', None):
-                    await asyncio.sleep(0.3)
-                    try:
-                        refetched_message = await self.client.get_messages(self.target_entity, ids=message_obj.id)
-                        if refetched_message and getattr(refetched_message, 'buttons', None):
-                            message_obj = refetched_message
-                            self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 重新获取消息 ID {message_obj.id} 后发现按钮。")
-                    except Exception as e_refetch:
-                        self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 重新获取消息按钮失败: {e_refetch}")
 
-                click_obj = await self._click_button_in_message(
-                    message_obj,
-                    initial_button_keywords,
-                    is_answer_logic=False,
-                    click_delay_seconds=self.initial_button_click_delay
-                )
+                # Track arrivals separately from the last fully processed response.
+                if message_obj:
+                    result_holder["received_message"] = message_obj
+
+                if message_obj and not getattr(message_obj, 'buttons', None):
+                    # An unfinished refetch must not overwrite a completed response.
+                    if deadline - asyncio.get_running_loop().time() <= 0.3:
+                        return
+                    # Read-only work shares the response deadline, unlike an owned click.
+                    refetch_timeout = asyncio.timeout_at(deadline)
+                    try:
+                        async with refetch_timeout:
+                            await asyncio.sleep(0.3)
+                            refetched_message = await self.client.get_messages(self.target_entity, ids=message_obj.id)
+                    except asyncio.TimeoutError:
+                        if not refetch_timeout.expired():
+                            raise
+                        # Only our response deadline ends the optional read normally.
+                        # Keep the saved message for the main loop's final assessment;
+                        # RPC-originated timeouts and other errors still propagate.
+                        return
+                    if refetched_message and getattr(refetched_message, 'buttons', None):
+                        message_obj = refetched_message
+                        result_holder["received_message"] = message_obj
+
+                # The click delay and RPC have a separate finite budget.
+                async with asyncio.timeout(self.BUTTON_CLICK_TIMEOUT_SECONDS):
+                    click_obj = await self._click_button_in_message(
+                        message_obj,
+                        initial_button_keywords,
+                        is_answer_logic=False,
+                        click_delay_seconds=self.initial_button_click_delay
+                    )
                 
                 result_holder["value"] = (click_obj, message_obj, None)
 
@@ -137,18 +195,63 @@ class CheckinStrategy:
         self.logger.info(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 等待来自 {target_display_name_log} 的初始响应 (超时: {self.timeout_seconds} 秒)...")
 
         try:
-            await asyncio.wait_for(action_taken_event.wait(), timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
-            current_click_obj, current_message_obj, _ = result_holder["value"]
-            if current_message_obj:
-                self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 已收到响应但等待可点击按钮超时，将返回最后一条响应供后续解析。")
-                result_holder["value"] = (current_click_obj, current_message_obj, None)
-            else:
-                self.logger.warning(f"用户 {self.nickname_for_logging}: (_execute_initial_step) 等待初始响应超时。")
-                result_holder["value"] = (None, None, asyncio.TimeoutError("等待初始响应超时"))
+            sent_msg = await self.send_command(command_to_send)
+            if sent_msg is None or not sent_msg.id:
+                raise ValueError("发送命令未返回消息 ID")
+            sent_msg_holder["id"] = sent_msg.id
+            sent_msg_holder["date"] = getattr(sent_msg, 'date', None)
+            deadline = asyncio.get_running_loop().time() + self.timeout_seconds
+            while not action_taken_event.is_set():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                try:
+                    event = await asyncio.wait_for(pending_events.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    # Only an empty response queue permits history recovery.
+                    # Send, refetch and click failures must not enter this path.
+                    break
+                # A click may outlive the response deadline, but not its own budget.
+                # No independent handler can keep clicking after this returns.
+                await process_event(event)
+
+            if not action_taken_event.is_set():
+                accepting_events = False
+                _, completed_response, _ = result_holder["value"]
+                current_response = result_holder["received_message"]
+                if (current_response is not None and completed_response is not None
+                        and current_response.id == completed_response.id):
+                    # An edit supersedes the older version of the same response.
+                    completed_response = None
+                # Decide only after waiting; a pending notice cannot erase prior success.
+                for response in (current_response, completed_response):
+                    if response is not None:
+                        parsed_response = await self._parse_response_text(response.raw_text or "")
+                        if parsed_response["success"]:
+                            return (None, response, None)
+                if current_response is not None:
+                    result_holder["value"] = (None, current_response, None)
+                # Allow one bounded recovery read after the response deadline.
+                async with asyncio.timeout(min(self.timeout_seconds, 5)):
+                    recent_messages = await self.client.get_messages(self.target_entity, limit=3)
+                bot_msg = next((m for m in recent_messages
+                                if m.sender_id == self.target_entity.id and m.id > sent_msg.id
+                                and getattr(getattr(m, 'reply_to', None), 'reply_to_msg_id', None)
+                                in (None, sent_msg.id)), None)
+                if bot_msg:
+                    async with asyncio.timeout(self.BUTTON_CLICK_TIMEOUT_SECONDS):
+                        fallback_click = await self._click_button_in_message(
+                            bot_msg, initial_button_keywords, click_delay_seconds=0
+                        )
+                    result_holder["value"] = (fallback_click, bot_msg, None)
+                elif result_holder["value"][1] is None:
+                    result_holder["value"] = (None, None, asyncio.TimeoutError("等待初始响应超时"))
         finally:
+            accepting_events = False
             if self.client:
                 self.client.remove_event_handler(temp_handler)
+            while not pending_events.empty():
+                pending_events.get_nowait()
         
         return result_holder["value"]
 
@@ -279,11 +382,12 @@ class SendMessageToChatStrategy(CheckinStrategy):
             return {"success": False, "message": f"发送消息时发生错误: {e}"}
 
 class MathCaptchaStrategy(CheckinStrategy):
+    DEFAULT_TIMEOUT_SECONDS = 30
+
     def __init__(self, client, target_entity, logger, nickname_for_logging, task_config=None):
         super().__init__(client, target_entity, logger, nickname_for_logging, task_config)
-        self.initial_button_text_keywords = task_config.get("initial_button_keywords", ['签到'])
+        self.initial_button_text_keywords = self.task_config.get("initial_button_keywords", ['签到'])
         self.action_event = None
-        self.timeout_seconds = task_config.get("timeout", 30) 
 
     def _solve_math_problem(self, problem_text):
         match = re.search(r'(\d+)\s*([+\-*\/])\s*(\d+)\s*=\s*\?', problem_text)
@@ -504,9 +608,10 @@ class MathCaptchaStrategy(CheckinStrategy):
         return current_result
 
 class VisionCaptchaStrategy(CheckinStrategy):
+    DEFAULT_TIMEOUT_SECONDS = 60
+
     def __init__(self, client, target_entity, logger, nickname_for_logging, task_config=None):
         super().__init__(client, target_entity, logger, nickname_for_logging, task_config)
-        self.timeout_seconds = task_config.get("timeout", 60)
         llm_settings = load_config().get('llm_settings', {})
         self.base_api_url = llm_settings.get('api_url', '').strip().rstrip('/')
         self.api_key = llm_settings.get('api_key')

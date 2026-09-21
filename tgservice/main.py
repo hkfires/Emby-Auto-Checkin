@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Union
 from .client_manager import ClientManager, DATA_DIR
-from .checkin_strategies import get_strategy_class
+from .checkin_strategies import StrategyConfigurationError, get_strategy_class
 from telethon import errors
 
 import sys
@@ -233,6 +233,10 @@ async def execute_action(request: ActionRequest):
     except errors.UserDeactivatedBanError as e:
         logger.error(f"会话 {request.session_name} 未授权或账户问题: {e}")
         raise HTTPException(status_code=403, detail=str(e))
+    except StrategyConfigurationError as exc:
+        # Translate invalid task input at the API boundary, preserving its meaning.
+        logger.error(f"策略 {request.strategy_id} 的任务配置无效: {exc}")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as ve:
         logger.error(f"无法找到实体 {request.target_entity_identifier}: {ve}")
         raise HTTPException(status_code=404, detail=f"Could not find entity: {request.target_entity_identifier}")
