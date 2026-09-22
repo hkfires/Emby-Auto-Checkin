@@ -629,7 +629,11 @@ class VisionCaptchaStrategy(CheckinStrategy):
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
         options_text = ", ".join([f"'{opt}'" for opt in options])
-        prompt_text = f"请根据图片内容，从以下选项中选择最匹配的一个，并只返回该选项的文本，不要包含其他任何内容。选项: {options_text}"
+        prompt_text = (
+            f"请根据图片内容，从以下选项中选择最匹配的一个，并只返回该选项的文本，"
+            f"严禁包含任何其他文字、标点、说明、置信度或格式标记。\n"
+            f"选项: {options_text}"
+        )
 
         messages = [
             {
@@ -704,13 +708,9 @@ class VisionCaptchaStrategy(CheckinStrategy):
                     click_result = await self._click_button_in_message(response_message, [predicted_answer], is_answer_logic=True)
 
                     if click_result is None:
-                        self.logger.warning(f"用户 {self.nickname_for_logging}: 未找到精确匹配的答案按钮 '{predicted_answer}'，尝试模糊匹配。")
-                        click_result = await self._click_button_in_message(response_message, [predicted_answer], is_answer_logic=False)
-                        
-                        if click_result is None:
-                            return {"success": False, "message": f"未找到与 '{predicted_answer}' 匹配的按钮（精确或模糊）。"}
-                        if isinstance(click_result, Exception):
-                            return {"success": False, "message": f"点击模糊匹配答案按钮 '{predicted_answer}' 失败: {click_result}"}
+                        return {"success": False, "message": f"未找到与 '{predicted_answer}' 完整匹配的答案按钮。"}
+                    if isinstance(click_result, Exception):
+                        return {"success": False, "message": f"点击答案按钮 '{predicted_answer}' 失败: {click_result}"}
 
                     if hasattr(click_result, 'message') and click_result.message:
                         self.logger.info(f"用户 {self.nickname_for_logging}: 点击按钮后收到弹框: {click_result.message}")
