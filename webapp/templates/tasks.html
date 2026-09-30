@@ -26,7 +26,8 @@
     <p>配置用户与机器人或群组之间的交互任务。</p>
     <div class="alert alert-light border d-flex flex-wrap align-items-center" role="status">
         <span class="mr-4">任务总数：<strong>{{ today_task_summary.total_count }}</strong></span>
-        <span>今日已执行：<strong>{{ today_task_summary.executed_count }}</strong></span>
+        <span class="mr-4">今日已执行：<strong>{{ today_task_summary.executed_count }}</strong></span>
+        <span>已禁用：<strong>{{ today_task_summary.disabled_count }}</strong></span>
     </div>
     <hr>
 
@@ -121,8 +122,10 @@
         </div>
         <div class="col-md-4">
             <div class="btn-group w-100" role="group">
+                <button id="bulk-disable-btn" class="btn btn-warning" disabled>批量禁用</button>
+                <button id="bulk-enable-btn" class="btn btn-success" disabled>批量启用</button>
                 <button id="bulk-delete-btn" class="btn btn-danger" disabled>批量删除</button>
-                <button id="reschedule-selected-btn" class="btn btn-info" disabled>重新调度任务</button>
+                <button id="reschedule-selected-btn" class="btn btn-info" disabled>重新调度</button>
             </div>
         </div>
     </div>
@@ -138,6 +141,7 @@
                     <th>执行时段</th>
                     <th>今日计划时间</th>
                     <th>今日状态</th>
+                    <th>状态</th>
                     <th>操作</th>
                 </tr>
             </thead>
@@ -146,6 +150,7 @@
                     <tr data-user-id="{{ task.user_telegram_id }}" data-bot-id="{{ task.bot_username or '' }}" data-chat-id="{{ task.target_chat_id or '' }}">
                         <td><input type="checkbox" class="task-checkbox" name="task_ids" value="{{ task.id }}"
                             data-user-id="{{ task.user_telegram_id }}"
+                            data-target-type="{{ task.target_type }}"
                             data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}"></td>
                         <td>{{ task.display_nickname }} ({{ task.user_telegram_id }})</td>
                         <td>{{ '机器人' if task.target_type == 'bot' else '群组' }}</td>
@@ -173,8 +178,18 @@
                         <td>
                             <span class="badge badge-{{ task.today_status_class }}">{{ task.today_status_display }}</span>
                         </td>
+                        <td>
+                            <span class="badge badge-{{ 'success' if task.enabled else 'secondary' }}">{{ '已启用' if task.enabled else '已禁用' }}</span>
+                        </td>
                         <td class="action-buttons">
-                            <button class="btn btn-info btn-sm" onclick="manualActionFromData(this)"
+                            <button class="btn btn-{{ 'warning' if task.enabled else 'success' }} btn-sm" onclick="setSingleTaskEnabled(this)"
+                                data-user-id="{{ task.user_telegram_id }}"
+                                data-target-type="{{ task.target_type }}"
+                                data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}"
+                                data-enabled="{{ 'false' if task.enabled else 'true' }}">
+                                {{ '禁用' if task.enabled else '启用' }}
+                            </button>
+                            <button class="btn btn-info btn-sm" onclick="manualActionFromData(this)" {% if not task.enabled %}disabled{% endif %}
                                 data-user-id="{{ task.user_telegram_id }}"
                                 data-target-type="{{ task.target_type }}"
                                 data-identifier="{% if task.target_type == 'bot' %}{{ task.bot_username }}{% else %}{{ task.target_chat_id }}{% endif %}"
@@ -327,10 +342,21 @@ $(document).ready(function() {
 
     $('#tasks-table').on('change', '.task-checkbox', function() {
         const anyChecked = $('.task-checkbox:checked').length > 0;
-        $('#bulk-delete-btn').prop('disabled', !anyChecked);
+        $('#bulk-disable-btn, #bulk-enable-btn, #bulk-delete-btn').prop('disabled', !anyChecked);
         $('#reschedule-selected-btn').prop('disabled', !anyChecked);
     });
     
+    $('#bulk-disable-btn, #bulk-enable-btn').on('click', function() {
+        const tasks = $('.task-checkbox:checked').map(function() {
+            return {
+                user_telegram_id: Number(this.dataset.userId),
+                target_type: this.dataset.targetType,
+                identifier: this.dataset.identifier
+            };
+        }).get();
+        if (tasks.length) setTasksEnabled(tasks, this.id === 'bulk-enable-btn');
+    });
+
     $('#bulk-delete-btn').on('click', function() {
         const selectedTasks = [];
         $('.task-checkbox:checked').each(function() {
@@ -394,6 +420,29 @@ $(document).ready(function() {
         });
     });
 });
+
+function setSingleTaskEnabled(buttonElement) {
+    const { userId, targetType, identifier, enabled } = buttonElement.dataset;
+    setTasksEnabled([{
+        user_telegram_id: Number(userId), target_type: targetType, identifier: identifier
+    }], enabled === 'true');
+}
+
+function setTasksEnabled(tasks, enabled) {
+    const action = enabled ? '启用' : '禁用';
+    if (!confirm(`确定要${action}选中的 ${tasks.length} 个任务吗？`)) return;
+    fetch("{{ url_for('api.set_tasks_enabled') }}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tasks: tasks, enabled: enabled })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showAlert(data.message, data.success ? 'success' : 'danger');
+        if (data.success) setTimeout(() => window.location.reload(), 1000);
+    })
+    .catch(error => showAlert('更新启用状态时发生网络错误: ' + error, 'danger'));
+}
 
 function updateTaskSlot(selectElement) {
     const { userId, identifier } = selectElement.dataset;

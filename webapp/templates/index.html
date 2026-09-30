@@ -19,7 +19,7 @@
                 <h5 class="card-title">执行今日未执行任务</h5>
                 <p class="card-text">
                     今日任务总数 {{ today_task_summary.total_count }}，已执行 {{ today_task_summary.executed_count }}，
-                    待执行 {{ today_task_summary.pending_count }}。
+                    待执行 {{ today_task_summary.pending_count }}，已禁用 {{ today_task_summary.disabled_count }}。
                 </p>
                 <button id="checkinAllBtn" class="btn btn-success"
                         {% if today_task_summary.pending_count == 0 %}disabled{% endif %}>

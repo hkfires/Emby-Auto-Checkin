@@ -492,6 +492,15 @@ def get_daily_task_states(config, state_date=None):
 def get_daily_task_counts(config, state_date=None):
     states = get_daily_task_states(config, state_date)
     descriptors = _task_descriptors(config)
+    enabled_identities = {
+        task_identity_from_config(task)
+        for task in config.get("checkin_tasks", [])
+        if task.get("enabled", True)
+    }
+    pending_descriptors = [
+        descriptor for descriptor in descriptors
+        if descriptor["identity"] in enabled_identities
+    ]
     executed_count = sum(
         1
         for descriptor in descriptors
@@ -499,11 +508,15 @@ def get_daily_task_counts(config, state_date=None):
     )
     pending_count = sum(
         1
-        for descriptor in descriptors
+        for descriptor in pending_descriptors
         if states.get(descriptor["identity"], {}).get("status") == TASK_STATE_PENDING
     )
     return {
         "total_count": len(config.get("checkin_tasks", [])),
+        "disabled_count": sum(
+            1 for task in config.get("checkin_tasks", [])
+            if not task.get("enabled", True)
+        ),
         "executed_count": executed_count,
         "pending_count": pending_count,
         "queued_count": sum(
@@ -598,7 +611,7 @@ def _queue_daily_tasks(task_entries, batch_id=None, state_date=None):
             conn.execute("BEGIN IMMEDIATE")
             for task_entry in task_entries:
                 identity = task_identity_from_config(task_entry)
-                if not identity:
+                if not identity or not task_entry.get("enabled", True):
                     skipped_count += 1
                     continue
                 _insert_state_if_missing(conn, state_date, identity)
@@ -653,6 +666,26 @@ def refresh_queued_batch(batch_id, state_date=None):
             conn.commit()
     except sqlite3.Error as exc:
         logger.error(f"刷新任务批次状态失败: {exc}")
+
+
+def cancel_queued_task(identity, batch_id=None, state_date=None):
+    """Cancel waiting work across dates unless scoped; preserve started attempts."""
+    if not identity:
+        return
+    _ensure_initialized()
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE daily_task_state
+            SET status = 'pending', batch_id = NULL, queued_at = NULL,
+                source = NULL, message = NULL
+            WHERE (? IS NULL OR state_date = ?) AND user_telegram_id = ?
+              AND target_type = ? AND target_identifier = ? AND status = 'queued'
+              AND (? IS NULL OR batch_id = ?)
+            """,
+            (state_date, state_date, *identity, batch_id, batch_id),
+        )
+        conn.commit()
 
 
 def start_queued_task(identity, batch_id, state_date=None):

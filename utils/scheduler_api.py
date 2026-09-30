@@ -15,6 +15,7 @@ from apscheduler.events import (
 )
 from utils.tgservice_api import execute_action
 from tgservice.checkin_strategies import get_strategy_display_name
+import utils.config as config_storage
 from utils.config import load_config
 from utils.notification import NotificationError, notify_checkin_failure
 from utils.log import record_notification_failure
@@ -29,6 +30,7 @@ from utils.log import (
     save_daily_checkin_log,
     set_task_planned_time,
     task_identity,
+    task_identity_from_config,
 )
 
 jobstores = {
@@ -131,9 +133,20 @@ def get_random_time_in_range(start_h, start_m, end_h, end_m, start_s=0, end_s=0)
 
 async def run_checkin_task(user_telegram_id, target_type, target_identifier, task_config):
     identity = task_identity(user_telegram_id, target_type, target_identifier)
-    config = load_config()
-    state_date = beijing_today_str()
-    claim = claim_daily_task(identity, "scheduled", allow_retry=False, state_date=state_date)
+    # Serialize the enabled check and start claim with config changes across processes.
+    with config_storage.get_config_lock(config_storage.CONFIG_FILE):
+        config = load_config()
+        fresh_task = next(
+            (task for task in config.get("checkin_tasks", [])
+             if task_identity_from_config(task) == identity),
+            None,
+        )
+        if fresh_task is None or not fresh_task.get("enabled", True):
+            logger.info(f"计划任务已删除或临时禁用，跳过: {identity}")
+            return
+        task_config = fresh_task
+        state_date = beijing_today_str()
+        claim = claim_daily_task(identity, "scheduled", allow_retry=False, state_date=state_date)
     if not claim["claimed"]:
         logger.info(
             f"计划任务跳过: User: {user_telegram_id}, Target: {target_identifier}, "
@@ -308,6 +321,12 @@ def _get_new_cron_trigger(task_entry, cfg):
 
 
 def reconcile_tasks(force_reschedule_ids: list = None):
+    # Keep config snapshots and job mutations ordered with enable/disable operations.
+    with config_storage.get_config_lock(config_storage.CONFIG_FILE):
+        return _reconcile_tasks_locked(force_reschedule_ids)
+
+
+def _reconcile_tasks_locked(force_reschedule_ids=None):
     logger.info("开始核对任务...")
     config = load_config()
     ensure_daily_task_rows(config, beijing_today_str())
@@ -347,6 +366,12 @@ def reconcile_tasks(force_reschedule_ids: list = None):
                         failed.append({"task_id": task_id, "error": "Task entry not found in current config"})
                         continue
 
+                    if not fresh_task_entry.get('enabled', True):
+                        scheduler.remove_job(full_job_id)
+                        clear_task_planned_time(_job_identity(job))
+                        failed.append({"task_id": task_id, "error": "任务已临时禁用"})
+                        continue
+
                     new_trigger = _get_new_cron_trigger(fresh_task_entry, config)
                     if new_trigger:
                         target_type = 'bot' if fresh_task_entry.get('bot_username') else 'chat'
@@ -381,6 +406,8 @@ def reconcile_tasks(force_reschedule_ids: list = None):
     expected_job_ids = set()
     user_map_by_id = {user['telegram_id']: user for user in config.get('users', []) if 'telegram_id' in user}
     for task_entry in config.get('checkin_tasks', []):
+        if not task_entry.get('enabled', True):
+            continue
         user_telegram_id = task_entry.get('user_telegram_id')
         user_config = user_map_by_id.get(user_telegram_id)
         if not user_config or user_config.get('status') != 'logged_in':
@@ -395,6 +422,7 @@ def reconcile_tasks(force_reschedule_ids: list = None):
 
     stale_job_ids = existing_job_ids - expected_job_ids
     for job_id in stale_job_ids:
+        clear_task_planned_time(_job_identity(scheduler.get_job(job_id)))
         scheduler.remove_job(job_id)
         logger.info(f"已移除过时的任务: {job_id}")
 
@@ -458,6 +486,11 @@ def reconcile_tasks(force_reschedule_ids: list = None):
     return {}
 
 def daily_reschedule_tasks():
+    with config_storage.get_config_lock(config_storage.CONFIG_FILE):
+        return _daily_reschedule_tasks_locked()
+
+
+def _daily_reschedule_tasks_locked():
     logger.info("开始每日自适应重调度...")
     config = load_config()
     
@@ -483,7 +516,7 @@ def daily_reschedule_tasks():
                         task_entry = task
                         break
 
-                if task_entry:
+                if task_entry and task_entry.get('enabled', True):
                     new_trigger = _get_new_cron_trigger(task_entry, config)
                     if new_trigger:
                         target_type = 'bot' if task_entry.get('bot_username') else 'chat'
@@ -499,7 +532,8 @@ def daily_reschedule_tasks():
                         logger.warning(f"无法为任务 {job.id} 生成新触发器，将此任务移除。")
                         scheduler.remove_job(job.id)
                 else:
-                    logger.info(f"在配置中未找到任务 {job.id} 的实体，正在移除。")
+                    logger.info(f"任务 {job.id} 已删除或临时禁用，正在移除。")
+                    clear_task_planned_time(_job_identity(job))
                     scheduler.remove_job(job.id)
             except Exception as e:
                 logger.error(f"每日重调度转换任务 {job.id} 时出错: {e}")

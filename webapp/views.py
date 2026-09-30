@@ -394,6 +394,7 @@ def tasks_page():
 
         identity = task_identity_from_config(task_data)
         task_state = today_task_states.get(identity, {}) if identity else {}
+        task_data["enabled"] = task_data.get("enabled", True)
         task_status = task_state.get("status", "pending")
         if task_status == "queued":
             task_data["today_status_display"] = "已排队"
@@ -413,7 +414,10 @@ def tasks_page():
             task_data["today_status_display"] = "未执行"
             task_data["today_status_class"] = "secondary"
 
-        if not scheduler_schedule_result.get("available"):
+        if not task_data["enabled"]:
+            task_data["today_planned_time_display"] = "已禁用"
+            task_data["today_planned_time_class"] = "secondary"
+        elif not scheduler_schedule_result.get("available"):
             task_data["today_planned_time_display"] = "调度器不可用"
             task_data["today_planned_time_class"] = "warning"
         else:

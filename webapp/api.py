@@ -2,11 +2,14 @@ import logging, os, asyncio, httpx, base64, json, sqlite3, threading
 from openai import AsyncOpenAI
 from flask import Blueprint, request, jsonify, current_app, flash
 from flask_login import current_user, login_required
+import utils.config as config_storage
 from utils.config import load_config, save_config
 from utils.log import (
     STALE_TASK_STATE_SECONDS,
     beijing_today_str,
     claim_daily_task,
+    cancel_queued_task,
+    clear_task_planned_time,
     complete_daily_task,
     ensure_daily_task_rows,
     get_daily_task_counts,
@@ -520,6 +523,53 @@ def delete_tasks_batch():
     else:
         return jsonify({"success": False, "message": "未找到要删除的任务。"}), 404
 
+@api.route('/tasks/set_enabled', methods=['POST'])
+@login_required
+def set_tasks_enabled():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or type(data.get('enabled')) is not bool:
+        return jsonify({"success": False, "message": "enabled 必须为布尔值。"}), 400
+    requested_tasks = data.get('tasks')
+    if not isinstance(requested_tasks, list) or not requested_tasks:
+        return jsonify({"success": False, "message": "未选择任务。"}), 400
+
+    identities = set()
+    for task in requested_tasks:
+        if not isinstance(task, dict):
+            return jsonify({"success": False, "message": "无效的任务参数。"}), 400
+        identity = task_identity(
+            task.get('user_telegram_id'), task.get('target_type'), task.get('identifier')
+        )
+        if not identity:
+            return jsonify({"success": False, "message": "无效的任务标识。"}), 400
+        identities.add(identity)
+
+    with config_storage.get_config_lock(config_storage.CONFIG_FILE):
+        config = load_config()
+        matched_tasks = [
+            task for task in config.get('checkin_tasks', [])
+            if task_identity_from_config(task) in identities
+        ]
+        if not matched_tasks:
+            return jsonify({"success": False, "message": "未找到指定的任务。"}), 404
+
+        enabled = data['enabled']
+        for task in matched_tasks:
+            task['enabled'] = enabled
+        save_config(config)
+        if not enabled:
+            for task in matched_tasks:
+                identity = task_identity_from_config(task)
+                cancel_queued_task(identity)
+                clear_task_planned_time(identity)
+    notify_scheduler_to_reconcile()
+    action = "启用" if enabled else "禁用"
+    return jsonify({
+        "success": True, "updated_count": len(matched_tasks),
+        "message": f"已{action} {len(matched_tasks)} 个任务。",
+    })
+
+
 @api.route('/tasks/update_slot', methods=['POST'])
 @login_required
 def update_task_slot():
@@ -751,21 +801,25 @@ async def manual_action():
 
     identity = task_identity(user_telegram_id, target_type, identifier)
     state_date = beijing_today_str()
-    configured_task = next(
-        (
-            task
-            for task in config.get("checkin_tasks", [])
-            if task_identity_from_config(task) == identity
-        ),
-        None,
-    )
-    claim = {"claimed": False, "token": None, "reason": "not_configured"}
-    if configured_task is not None:
-        claim = claim_daily_task(identity, "manual", allow_retry=True, state_date=state_date)
-        if not claim["claimed"]:
-            if claim["reason"] == "in_progress":
-                return jsonify({"success": False, "message": "该任务正在排队或执行中，请稍后再试。"}), 409
-            return jsonify({"success": False, "message": "该任务今日状态暂时无法更新。"}), 503
+    with config_storage.get_config_lock(config_storage.CONFIG_FILE):
+        fresh_config = load_config()
+        configured_task = next(
+            (
+                task
+                for task in fresh_config.get("checkin_tasks", [])
+                if task_identity_from_config(task) == identity
+            ),
+            None,
+        )
+        claim = {"claimed": False, "token": None, "reason": "not_configured"}
+        if configured_task is not None:
+            if not configured_task.get("enabled", True):
+                return jsonify({"success": False, "message": "该任务已禁用，请先启用。"}), 409
+            claim = claim_daily_task(identity, "manual", allow_retry=True, state_date=state_date)
+            if not claim["claimed"]:
+                if claim["reason"] == "in_progress":
+                    return jsonify({"success": False, "message": "该任务正在排队或执行中，请稍后再试。"}), 409
+                return jsonify({"success": False, "message": "该任务今日状态暂时无法更新。"}), 503
 
     try:
         result = await execute_action(
@@ -886,17 +940,31 @@ async def execute_all_tasks_internal(
         if not identity:
             continue
 
-        if batch_id:
-            refresh_queued_batch(batch_id, state_date)
-            start_result = start_queued_task(identity, batch_id, state_date)
-            if not start_result["started"]:
+        # Re-read and claim under the same lock used by disabling and queue submission.
+        with config_storage.get_config_lock(config_storage.CONFIG_FILE):
+            fresh_config = load_config()
+            fresh_task = next(
+                (task for task in fresh_config.get("checkin_tasks", [])
+                 if task_identity_from_config(task) == identity),
+                None,
+            )
+            if fresh_task is None or not fresh_task.get("enabled", True):
+                if batch_id:
+                    cancel_queued_task(identity, batch_id, state_date)
                 continue
-            run_token = start_result["token"]
-        else:
-            claim = claim_daily_task(identity, "quick", allow_retry=False, state_date=state_date)
-            if not claim["claimed"]:
-                continue
-            run_token = claim["token"]
+            task_config_entry = fresh_task
+
+            if batch_id:
+                refresh_queued_batch(batch_id, state_date)
+                start_result = start_queued_task(identity, batch_id, state_date)
+                if not start_result["started"]:
+                    continue
+                run_token = start_result["token"]
+            else:
+                claim = claim_daily_task(identity, "quick", allow_retry=False, state_date=state_date)
+                if not claim["claimed"]:
+                    continue
+                run_token = claim["token"]
 
         user_telegram_id, target_type, target_identifier = identity
         user_config = user_map_by_id.get(user_telegram_id)
@@ -1009,33 +1077,34 @@ async def execute_all_tasks_internal(
 
 @api.route('/tasks/execute_all', methods=['POST'])
 def execute_all_tasks_http():
-    config = load_config()
-    if not config.get("api_id") or not config.get("api_hash"):
-        return jsonify({"success": False, "message": "请先设置API ID和API Hash。"}), 400
+    with config_storage.get_config_lock(config_storage.CONFIG_FILE):
+        config = load_config()
+        if not config.get("api_id") or not config.get("api_hash"):
+            return jsonify({"success": False, "message": "请先设置API ID和API Hash。"}), 400
 
-    tasks_to_queue = list(config.get("checkin_tasks", []))
-    if not tasks_to_queue:
-        return jsonify({
-            "success": True,
-            "queued_count": 0,
-            "skipped_count": 0,
-            "message": "没有配置任务。",
-        })
+        tasks_to_queue = list(config.get("checkin_tasks", []))
+        if not tasks_to_queue:
+            return jsonify({
+                "success": True,
+                "queued_count": 0,
+                "skipped_count": 0,
+                "message": "没有配置任务。",
+            })
 
-    state_date = beijing_today_str()
-    ensure_daily_task_rows(config, state_date)
-    try:
-        batch_id, queued_count, skipped_count = queue_daily_tasks(
-            tasks_to_queue, state_date=state_date
-        )
-    except sqlite3.Error as exc:
-        logger.error(f"今日任务排队失败: {exc}")
-        return jsonify({
-            "success": False,
-            "queued_count": 0,
-            "skipped_count": 0,
-            "message": "任务状态数据库暂时不可用，请稍后重试。",
-        }), 503
+        state_date = beijing_today_str()
+        ensure_daily_task_rows(config, state_date)
+        try:
+            batch_id, queued_count, skipped_count = queue_daily_tasks(
+                tasks_to_queue, state_date=state_date
+            )
+        except sqlite3.Error as exc:
+            logger.error(f"今日任务排队失败: {exc}")
+            return jsonify({
+                "success": False,
+                "queued_count": 0,
+                "skipped_count": 0,
+                "message": "任务状态数据库暂时不可用，请稍后重试。",
+            }), 503
 
     if queued_count > 0:
         thread = threading.Thread(

@@ -1,7 +1,21 @@
 import json, os
+import threading
+from filelock import FileLock
 
 DATA_DIR = "data"
 CONFIG_FILE = os.path.join(DATA_DIR, 'config_data.json')
+
+_config_locks = {}
+_config_locks_guard = threading.Lock()
+
+
+def get_config_lock(config_file):
+    """Share a reentrant file lock for config updates and task-start decisions."""
+    with _config_locks_guard:
+        if config_file not in _config_locks:
+            _config_locks[config_file] = FileLock(config_file + ".lock", timeout=10)
+        return _config_locks[config_file]
+
 
 def _get_default_time_slot():
     return {"id": 1, "name": "默认时段", "start_hour": 8, "start_minute": 0, "start_second": 0, "end_hour": 22, "end_minute": 0, "end_second": 0}
@@ -38,16 +52,13 @@ def _get_default_config():
     return cfg
 
 def load_config():
-    from filelock import FileLock
-    lock_file = CONFIG_FILE + ".lock"
     if not os.path.exists(CONFIG_FILE):
         default_config = _get_default_config()
         save_config(default_config)
         return default_config
     
-    lock = FileLock(lock_file, timeout=10)
     try:
-        with lock:
+        with get_config_lock(CONFIG_FILE):
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
@@ -122,17 +133,15 @@ def load_config():
              default_slot_id_for_tasks = first_slot_id
         
     for task in config.get("checkin_tasks", []):
+        task.setdefault("enabled", True)
         if "selected_time_slot_id" not in task or migrated_to_slots_this_run:
             task["selected_time_slot_id"] = default_slot_id_for_tasks
             
     return config
 
 def save_config(config_data):
-    from filelock import FileLock
-    lock_file = CONFIG_FILE + ".lock"
     os.makedirs(DATA_DIR, exist_ok=True)
-    lock = FileLock(lock_file, timeout=10)
-    with lock:
+    with get_config_lock(CONFIG_FILE):
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
 
