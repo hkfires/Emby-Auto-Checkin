@@ -388,9 +388,7 @@ $(document).ready(function() {
     
     $('#reschedule-selected-btn').on('click', function() {
         const selectedTaskIds = $('.task-checkbox:checked').map(function() {
-            const userId = $(this).data('user-id');
-            const identifier = $(this).data('identifier');
-            return `${userId}_${identifier}`;
+            return `${this.dataset.userId}_${this.dataset.identifier}`;
         }).get();
 
         if (selectedTaskIds.length === 0) {
@@ -411,7 +409,9 @@ $(document).ready(function() {
                 showAlert(data.message || '任务已成功重新调度。', 'success');
                 setTimeout(() => window.location.reload(), 1000);
             } else {
-                showAlert(data.message || '重新调度任务失败。', 'danger');
+                const partiallyRescheduled = data.result && data.result.rescheduled && data.result.rescheduled.length > 0;
+                showAlert(data.message || '重新调度任务失败。', partiallyRescheduled ? 'warning' : 'danger');
+                if (partiallyRescheduled) setTimeout(() => window.location.reload(), 1000);
             }
         })
         .catch(error => {

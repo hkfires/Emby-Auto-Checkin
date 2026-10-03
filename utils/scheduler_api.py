@@ -21,6 +21,7 @@ from utils.notification import NotificationError, notify_checkin_failure
 from utils.log import record_notification_failure
 from utils.log import (
     BEIJING_TZ,
+    beijing_now,
     beijing_today_str,
     claim_daily_task,
     clear_task_planned_time,
@@ -287,7 +288,7 @@ def log_scheduled_jobs():
         logger.info(f"任务: {job.name} | 计划时间: {run_time_str}")
     logger.info("--------------------------")
 
-def _get_new_cron_trigger(task_entry, cfg):
+def _get_new_cron_trigger(task_entry, cfg, remaining_today=False):
     scheduler_time_slots = cfg.get('scheduler_time_slots', [])
     if not scheduler_time_slots:
         logger.error("无法生成 CronTrigger，因为未配置任何时间段。")
@@ -297,6 +298,31 @@ def _get_new_cron_trigger(task_entry, cfg):
     time_slot = None
     if selected_slot_id:
         time_slot = next((s for s in scheduler_time_slots if s.get('id') == selected_slot_id), None)
+
+    if remaining_today:
+        # Manual rescheduling must not silently move today's plan to tomorrow.
+        now = beijing_now()
+        first_future_second = now.hour * 3600 + now.minute * 60 + now.second + 1
+        available_ranges = []
+        for slot in [time_slot] if time_slot else scheduler_time_slots:
+            start = slot.get('start_hour', 8) * 3600 + slot.get('start_minute', 0) * 60 + slot.get('start_second', 0)
+            end = slot.get('end_hour', 22) * 3600 + slot.get('end_minute', 0) * 60 + slot.get('end_second', 0)
+            ranges = [(start, end)] if start < end else [(start, 86399), (0, end)]
+            for lower, upper in ranges:
+                lower = max(lower, first_future_second)
+                if lower <= upper:
+                    available_ranges.append((lower, upper))
+        if not available_ranges:
+            return None
+        lower, upper = random.choice(available_ranges)
+        chosen_second = random.randint(lower, upper)
+        return CronTrigger(
+            hour=chosen_second // 3600,
+            minute=(chosen_second % 3600) // 60,
+            second=chosen_second % 60,
+            start_date=now,
+            timezone="Asia/Shanghai",
+        )
 
     if not time_slot:
         time_slot = random.choice(scheduler_time_slots)
@@ -334,6 +360,13 @@ def _reconcile_tasks_locked(force_reschedule_ids=None):
     if not config.get('scheduler_enabled'):
         removed_count = _remove_all_checkin_jobs("调度器已禁用")
         logger.info(f"调度器已禁用，已清理 {removed_count} 个签到任务并跳过任务核对。")
+        if force_reschedule_ids is not None:
+            return {
+                "rescheduled": [],
+                "failed": [{"task_id": task_id, "error": "调度器未启用"}
+                           for task_id in dict.fromkeys(force_reschedule_ids)],
+                "not_found": [],
+            }
         return {}
 
     if force_reschedule_ids is not None:
@@ -341,68 +374,71 @@ def _reconcile_tasks_locked(force_reschedule_ids=None):
         rescheduled = []
         failed = []
         not_found = []
+        task_map = {
+            f"{task.get('user_telegram_id')}_{task.get('bot_username') or task.get('target_chat_id')}": task
+            for task in config.get('checkin_tasks', [])
+        }
+        user_map = {user.get('telegram_id'): user for user in config.get('users', [])}
 
-        for task_id in force_reschedule_ids:
+        for task_id in dict.fromkeys(force_reschedule_ids):
             full_job_id = f"checkin_job_{task_id}"
-            job = scheduler.get_job(full_job_id)
-            if job:
-                try:
-                    parts = full_job_id.split('_')
-                    user_id = int(parts[2])
-                    identifier_str = "_".join(parts[3:])
-
-                    fresh_task_entry = None
-                    for task in config.get('checkin_tasks', []):
-                        if task.get('user_telegram_id') != user_id:
-                            continue
-                        
-                        current_identifier = str(task.get('bot_username') or task.get('target_chat_id'))
-                        if current_identifier == identifier_str:
-                            fresh_task_entry = task
-                            break
-                    
-                    if not fresh_task_entry:
-                        logger.warning(f"无法在当前配置中找到任务 {full_job_id} 的条目，跳过。")
-                        failed.append({"task_id": task_id, "error": "Task entry not found in current config"})
-                        continue
-
-                    if not fresh_task_entry.get('enabled', True):
-                        scheduler.remove_job(full_job_id)
-                        clear_task_planned_time(_job_identity(job))
-                        failed.append({"task_id": task_id, "error": "任务已临时禁用"})
-                        continue
-
-                    new_trigger = _get_new_cron_trigger(fresh_task_entry, config)
-                    if new_trigger:
-                        target_type = 'bot' if fresh_task_entry.get('bot_username') else 'chat'
-                        identifier = fresh_task_entry.get('bot_username') or fresh_task_entry.get('target_chat_id')
-                        new_args = [user_id, target_type, identifier, fresh_task_entry]
-
-                        scheduler.add_job(
-                            run_checkin_task_sync,
-                            trigger=new_trigger,
-                            args=new_args,
-                            id=full_job_id,
-                            name=job.name,
-                            replace_existing=True
-                        )
-                        _record_job_schedule(scheduler.get_job(full_job_id))
-                        rescheduled.append(task_id)
-                        logger.info(f"已成功为任务 {full_job_id} 生成新的执行计划。")
-                    else:
-                        failed.append({"task_id": task_id, "error": "无法生成新的触发器"})
-                        logger.error(f"为任务 {full_job_id} 生成新触发器失败。")
-                except Exception as e:
-                    logger.error(f"修改任务 {full_job_id} 时出错: {e}")
-                    failed.append({"task_id": task_id, "error": str(e)})
-            else:
+            task_entry = task_map.get(task_id)
+            if not task_entry:
                 not_found.append(task_id)
-                logger.warning(f"尝试重调度但未找到任务: {task_id} (构造的ID: {full_job_id})")
-        
+                logger.warning(f"当前配置中未找到任务: {task_id}")
+                continue
+
+            try:
+                job = scheduler.get_job(full_job_id)
+                if not task_entry.get('enabled', True):
+                    if job:
+                        scheduler.remove_job(full_job_id)
+                    clear_task_planned_time(task_identity_from_config(task_entry))
+                    failed.append({"task_id": task_id, "error": "任务已临时禁用"})
+                    continue
+
+                user_id = task_entry.get('user_telegram_id')
+                user_config = user_map.get(user_id)
+                if not user_config or user_config.get('status') != 'logged_in':
+                    failed.append({"task_id": task_id, "error": "任务用户未登录"})
+                    continue
+
+                new_trigger = _get_new_cron_trigger(task_entry, config, remaining_today=True)
+                if not new_trigger:
+                    failed.append({"task_id": task_id, "error": "配置时段内今天已无剩余可调度时间"})
+                    continue
+
+                # Recheck after sampling, then pin the run time so add_job cannot roll it to tomorrow.
+                current_time = beijing_now()
+                next_run_time = new_trigger.get_next_fire_time(None, current_time)
+                if (next_run_time is None
+                        or current_time.date() != new_trigger.start_date.date()
+                        or next_run_time.date() != new_trigger.start_date.date()):
+                    failed.append({"task_id": task_id, "error": "候选执行时间已过，请重新调度"})
+                    continue
+
+                target_type = 'bot' if task_entry.get('bot_username') else 'chat'
+                identifier = task_entry.get('bot_username') or task_entry.get('target_chat_id')
+                nickname = user_config.get('nickname', f"TGID_{user_id}")
+                scheduler.add_job(
+                    run_checkin_task_sync,
+                    trigger=new_trigger,
+                    args=[user_id, target_type, identifier, task_entry],
+                    id=full_job_id,
+                    name=job.name if job else f"Task: {nickname} -> {identifier}",
+                    next_run_time=next_run_time,
+                    replace_existing=True,
+                )
+                _record_job_schedule(scheduler.get_job(full_job_id))
+                rescheduled.append(task_id)
+                logger.info(f"已成功为任务 {full_job_id} 生成新的执行计划。")
+            except Exception as exc:
+                logger.error(f"修改任务 {full_job_id} 时出错: {exc}")
+                failed.append({"task_id": task_id, "error": str(exc)})
+
         result = {"rescheduled": rescheduled, "failed": failed, "not_found": not_found}
         logger.info(f"强制重调度完成: {result}")
         return result
-
     expected_job_ids = set()
     user_map_by_id = {user['telegram_id']: user for user in config.get('users', []) if 'telegram_id' in user}
     for task_entry in config.get('checkin_tasks', []):

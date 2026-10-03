@@ -27,14 +27,31 @@ def trigger_reconciliation():
     logger.info("收到 API 请求，开始执行任务核对...")
     task_ids = None
     if request.method == 'POST':
-        data = request.get_json()
-        if data:
-            task_ids = data.get('task_ids')
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "message": "无效的 JSON 请求。"}), 400
+        task_ids = data.get('task_ids')
+        if task_ids is not None and (
+            not isinstance(task_ids, list) or not task_ids
+            or any(not isinstance(task_id, str) or not task_id.strip() for task_id in task_ids)
+        ):
+            return jsonify({"success": False, "message": "无效的 task_ids 参数。"}), 400
 
     try:
         result = reconcile_tasks(force_reschedule_ids=task_ids)
         log_scheduled_jobs()
-        return jsonify({"success": True, "message": "任务重新调度成功。", "result": result}), 200
+        success = not result.get("failed") and not result.get("not_found")
+        message = "任务重新调度成功。"
+        if task_ids is not None:
+            scheduled_count = len(result.get("rescheduled", []))
+            failed_count = len(result.get("failed", [])) + len(result.get("not_found", []))
+            message = f"重新调度完成：成功 {scheduled_count} 个，失败 {failed_count} 个。"
+            errors = list(dict.fromkeys(item["error"] for item in result.get("failed", [])))
+            if result.get("not_found"):
+                errors.append("部分任务在当前配置中不存在")
+            if errors:
+                message += "原因：" + "；".join(errors) + "。"
+        return jsonify({"success": success, "message": message, "result": result}), 200
     except Exception as e:
         logger.error(f"执行任务核对时发生错误: {e}")
         return jsonify({"success": False, "message": f"内部错误: {e}"}), 500

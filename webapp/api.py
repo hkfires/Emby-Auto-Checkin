@@ -688,12 +688,13 @@ def delete_task():
 @api.route('/scheduler/reconcile', methods=['POST'])
 @login_required
 def reconcile_scheduler_tasks():
-    data = request.get_json()
-    if not data:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not data:
         return jsonify({"success": False, "message": "无效的请求：缺少JSON body。"}), 400
 
     task_ids = data.get('task_ids')
-    if not task_ids or not isinstance(task_ids, list):
+    if (not isinstance(task_ids, list) or not task_ids
+            or any(not isinstance(task_id, str) or not task_id.strip() for task_id in task_ids)):
         return jsonify({"success": False, "message": "缺少或无效的 'task_ids' 参数。"}), 400
 
     SCHEDULER_HOST = os.environ.get("SCHEDULER_HOST", "localhost")
