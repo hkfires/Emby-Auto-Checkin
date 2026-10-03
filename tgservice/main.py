@@ -56,6 +56,8 @@ class ResolveEntityRequest(BaseModel):
 @app.post("/entities/resolve", tags=["实体解析"])
 async def resolve_entity(request: ResolveEntityRequest):
     client = client_manager.get_client(request.session_name)
+    if not client and hasattr(client_manager, "get_or_reconnect_client"):
+        client = await client_manager.get_or_reconnect_client(request.session_name)
     if not client:
         raise HTTPException(status_code=404, detail=f"Session '{request.session_name}' not found or not connected.")
     
@@ -205,6 +207,8 @@ async def sign_in(request: SignInRequest):
 @app.post("/actions/execute", tags=["核心操作"])
 async def execute_action(request: ActionRequest):
     client = client_manager.get_client(request.session_name)
+    if not client and hasattr(client_manager, "get_or_reconnect_client"):
+        client = await client_manager.get_or_reconnect_client(request.session_name)
     if not client:
         logger.error(f"动作请求失败: 未找到或未连接会话 {request.session_name}")
         raise HTTPException(status_code=404, detail=f"Session '{request.session_name}' not found or not connected.")
@@ -267,8 +271,14 @@ async def manage_session(request: SessionManageRequest):
 
 async def periodic_health_check():
     while True:
-        await asyncio.sleep(300)
-        await client_manager.health_check_all_clients()
+        try:
+            await asyncio.sleep(300)
+            await client_manager.health_check_all_clients()
+        except asyncio.CancelledError:
+            logger.info("后台健康检查任务已取消。")
+            break
+        except Exception as e:
+            logger.error(f"后台健康检查任务发生异常: {e}", exc_info=True)
 
 @app.on_event("startup")
 async def startup_event():
