@@ -25,9 +25,9 @@
     <h2>任务管理</h2>
     <p>配置用户与机器人或群组之间的交互任务。</p>
     <div class="alert alert-light border d-flex flex-wrap align-items-center" role="status">
-        <span class="mr-4">任务总数：<strong>{{ today_task_summary.total_count }}</strong></span>
-        <span class="mr-4">今日已执行：<strong>{{ today_task_summary.executed_count }}</strong></span>
-        <span>已禁用：<strong>{{ today_task_summary.disabled_count }}</strong></span>
+        <span class="mr-4">任务总数：<strong id="summary-total-count">{{ today_task_summary.total_count }}</strong></span>
+        <span class="mr-4">今日已执行：<strong id="summary-executed-count">{{ today_task_summary.executed_count }}</strong></span>
+        <span>已禁用：<strong id="summary-disabled-count">{{ today_task_summary.disabled_count }}</strong></span>
     </div>
     <hr>
 
@@ -176,7 +176,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            <span class="badge badge-{{ task.today_status_class }}">{{ task.today_status_display }}</span>
+                            <span class="badge badge-{{ task.today_status_class }} task-today-status">{{ task.today_status_display }}</span>
                         </td>
                         <td>
                             <span class="badge badge-{{ 'success' if task.enabled else 'secondary' }}">{{ '已启用' if task.enabled else '已禁用' }}</span>
@@ -499,6 +499,17 @@ function manualActionFromData(buttonElement) {
     buttonElement.innerHTML = '处理中...';
     buttonElement.disabled = true;
 
+    const row = buttonElement.closest('tr');
+    const statusBadge = row ? row.querySelector('.task-today-status') : null;
+    let prevBadgeClass = '';
+    let prevBadgeText = '';
+    if (statusBadge) {
+        prevBadgeClass = statusBadge.className;
+        prevBadgeText = statusBadge.textContent;
+        statusBadge.className = 'badge badge-warning task-today-status';
+        statusBadge.textContent = '执行中';
+    }
+
     const payload = new URLSearchParams({
         user_telegram_id: userId,
         target_type: targetType,
@@ -512,16 +523,47 @@ function manualActionFromData(buttonElement) {
         method: 'POST',
         body: payload
     })
-    .then(response => response.json())
-    .then(data => {
+    .then(response => response.json().then(data => ({ ok: response.ok, status: response.status, data })))
+    .then(({ ok, data }) => {
         showAlert(data.message, data.success ? 'success' : 'danger');
         buttonElement.innerHTML = originalButtonText;
         buttonElement.disabled = false;
+
+        if (statusBadge) {
+            if (data.today_status_display && data.today_status_class) {
+                statusBadge.className = `badge badge-${data.today_status_class} task-today-status`;
+                statusBadge.textContent = data.today_status_display;
+            } else if (ok && data.success !== undefined) {
+                const statusClass = data.success ? 'success' : 'danger';
+                const statusDisplay = data.success ? '已执行（成功）' : '已执行（失败）';
+                statusBadge.className = `badge badge-${statusClass} task-today-status`;
+                statusBadge.textContent = statusDisplay;
+            } else {
+                statusBadge.className = prevBadgeClass;
+                statusBadge.textContent = prevBadgeText;
+            }
+        }
+
+        if (data.today_task_summary) {
+            if (data.today_task_summary.total_count !== undefined) {
+                $('#summary-total-count').text(data.today_task_summary.total_count);
+            }
+            if (data.today_task_summary.executed_count !== undefined) {
+                $('#summary-executed-count').text(data.today_task_summary.executed_count);
+            }
+            if (data.today_task_summary.disabled_count !== undefined) {
+                $('#summary-disabled-count').text(data.today_task_summary.disabled_count);
+            }
+        }
     })
     .catch(error => {
         showAlert('手动执行时发生网络错误: ' + error, 'danger');
         buttonElement.innerHTML = originalButtonText;
         buttonElement.disabled = false;
+        if (statusBadge) {
+            statusBadge.className = prevBadgeClass;
+            statusBadge.textContent = prevBadgeText;
+        }
     });
 }
 

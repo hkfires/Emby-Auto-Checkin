@@ -348,6 +348,34 @@ class TaskEnabledTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('批量禁用', html)
         self.assertIn('批量启用', html)
         self.assertIn('data-enabled="true"', html)
+        self.assertIn('task-today-status', html)
+        self.assertIn('summary-executed-count', html)
+
+    async def test_manual_action_returns_today_status_and_summary(self):
+        # Test success case
+        with self.app.test_request_context('/api/checkin/manual', method='POST', data={
+            'user_telegram_id': '1', 'target_type': 'bot', 'identifier': 'bot'
+        }):
+            response = await self.api_module.manual_action()
+            data = response.get_json()
+            self.assertTrue(data['success'])
+            self.assertEqual(data['today_status_display'], '已执行（成功）')
+            self.assertEqual(data['today_status_class'], 'success')
+            self.assertIn('today_task_summary', data)
+            self.assertEqual(data['today_task_summary']['executed_count'], 1)
+
+        # Test failure case (retry manual action)
+        self.execute.return_value = {'success': False, 'message': 'bot timed out'}
+        with self.app.test_request_context('/api/checkin/manual', method='POST', data={
+            'user_telegram_id': '1', 'target_type': 'bot', 'identifier': 'bot'
+        }):
+            response = await self.api_module.manual_action()
+            data = response.get_json()
+            self.assertFalse(data['success'])
+            self.assertEqual(data['today_status_display'], '已执行（失败）')
+            self.assertEqual(data['today_status_class'], 'danger')
+            self.assertIn('today_task_summary', data)
+            self.assertEqual(data['today_task_summary']['executed_count'], 1)
 
 
 if __name__ == '__main__':

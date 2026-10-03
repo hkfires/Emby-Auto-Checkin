@@ -849,6 +849,14 @@ async def manual_action():
             identity, claim["token"], result.get("success"),
             result.get("message"), state_date=state_date,
         )
+        result["today_status_display"] = (
+            "已执行（成功）" if result.get("success") else "已执行（失败）"
+        )
+        result["today_status_class"] = "success" if result.get("success") else "danger"
+        try:
+            result["today_task_summary"] = get_daily_task_counts(fresh_config, state_date)
+        except Exception as summary_exc:
+            logger.warning(f"获取今日任务统计失败: {summary_exc}")
     if not result.get("success"):
         try:
             await notify_checkin_failure(
